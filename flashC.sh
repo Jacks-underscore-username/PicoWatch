@@ -40,8 +40,8 @@ export -f flash
 trap 'sudo umount mnt 2>/dev/null; sudo rm mnt -rf &&  exit' INT TERM
 
 if [[ $* == *--watch* ]]; then
-	echo -e "Watching for changes in c files"
-	find . -type f | grep -P '^(?!\./\.zig)(?!\./build).*\.[ch]$' | entr -d bash -c "clear && flash && echo 'Watching for changes in c files'"
+	echo -e "Watching for changes in C / zig files"
+	find . -type f | grep -P '^(?!\./\.zig-cache)(?!\./build).*\.(?:[ch]|zig)$' | entr -d bash -c "clear && flash && echo 'Watching for changes in C / zig files'"
 else
 	flash
 fi
