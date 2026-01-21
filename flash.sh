@@ -30,10 +30,10 @@ flash() {
 	echo -e "Unmounting"
 	sudo umount "$DEVICE"
 	echo -e "Removing mount point"
-	sudo sudo rm mnt -rf
+	sudo rm mnt -rf
 	end=$(date +%s)
 	runtime=$((end - start))
-	echo -e "Flashed program in $runtime s"
+	echo -e "Flashed program in $runtime seconds"
 }
 
 export -f flash
