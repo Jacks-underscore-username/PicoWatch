@@ -1,5 +1,5 @@
 .{
-    .name = .PicoWatch,
+    .name = .PicoWatchC,
     .version = "0.15.2",
     .dependencies = .{
         .microzig = .{
@@ -8,5 +8,5 @@
         },
     },
     .paths = .{""},
-    .fingerprint = 0x4feb97808c68efb4,
+    .fingerprint = 0xd020971045794a59,
 }

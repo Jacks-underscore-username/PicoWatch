@@ -1,18 +1,21 @@
 const std = @import("std");
+const microzig = @import("microzig");
+const rp2xxx = microzig.hal;
+const time = rp2xxx.time;
 
-// const arithmetic = @cImport({
-//     @cInclude("arithmetic.c");
-// });
-
-fn add(x: i32, y: i32) i32 {
-    // return arithmetic.add(x, y);
-    return x + y;
-}
+// Compile-time pin configuration
+// const pin_config = rp2xxx.pins.GlobalConfiguration{
+//     .GPIO25 = .{
+//         .name = "led",
+//         .direction = .out,
+//     },
+// };
 
 pub fn main() !void {
-    const x: i32 = 5;
-    const y: i32 = 16;
-    const z: i32 = add(x, y);
+    // pin_config.apply();
 
-    std.debug.print("{d} + {d} = {d}.\n", .{ x, y, z });
+    // while (true) {
+    // pins.led.toggle();
+    time.sleep_ms(250);
+    // }
 }
