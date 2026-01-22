@@ -2,7 +2,7 @@
   description = "Development environment for a Pi Pico W project";
 
   inputs = {
-    nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-24.11";
+    nixpkgs-stable.url = "github:NixOS/nixpkgs/nixos-25.11";
 
     nixpkgs-unstable.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
@@ -32,12 +32,12 @@
     };
 
     full_pico_sdk =
-      pkgs_unstable_configured.pico-sdk.override
+      pkgs_stable_configured.pico-sdk.override
       {
         withSubmodules = true;
       };
 
-    deps = with pkgs_unstable_configured; [
+    deps = with pkgs_stable_configured; [
       gcc-arm-embedded
       full_pico_sdk
       picotool
@@ -50,9 +50,10 @@
       clang
       entr
       shfmt
+      zig
     ];
 
-    libusbLibPath = "${pkgs_unstable_configured.libusb1}/lib";
+    libusbLibPath = "${pkgs_stable_configured.libusb1}/lib";
     picoSdkPath = "${full_pico_sdk}/lib/pico-sdk";
   in {
     devShells.${system}.default = pkgs_stable.mkShell {
