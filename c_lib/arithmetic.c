@@ -1,4 +1,4 @@
-#include "arithmetic2.h";
+#include "arithmetic.h";
 
 int add(int x, int y) {
   return x + y;

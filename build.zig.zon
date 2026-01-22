@@ -1,6 +1,6 @@
 .{
     .name = .PicoWatch,
-    .version = "0.15.2",
+    .version = "0.0.0",
     .dependencies = .{
         .microzig = .{
             .url = "https://codeload.github.com/piotrfila/microzig/zip/1a1aab8d48e81b12a072c20ca9da2a6c302c2192",
