@@ -12,5 +12,5 @@
         },
     },
     .paths = .{""},
-    .fingerprint = 0xd020971045794a59,
+    .fingerprint = 0x4feb9780bb24e66c,
 }
