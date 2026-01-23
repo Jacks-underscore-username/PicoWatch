@@ -105,12 +105,14 @@ int main(void) {
   // LVGL_Init();
   // Widgets_Init();
 
-  uint16_t hue = 0;
+  float hue = 0;
 
   while (1) {
     AMOLED_1IN8_Clear(hslToRgb565(hue, 1, 0.5f));
 
-    hue = (hue + 1) % 360;
+    hue += 360.0f / 50.0f;
+    if (hue > 360)
+      hue -= 360;
 
     //   lv_task_handler();
     DEV_Delay_ms(1);

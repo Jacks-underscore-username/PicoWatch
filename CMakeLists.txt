@@ -33,7 +33,7 @@ add_subdirectory(./lib/AMOLED)
 # add_subdirectory(./lib/lvgl)
 
 # Add header file directory
-include_directories(./examples)
+# include_directories(./examples)
 include_directories(./lib/Config)
 include_directories(./lib/QSPI_PIO)
 include_directories(./lib/AMOLED)
@@ -58,9 +58,9 @@ pico_enable_stdio_usb(RP2350-Touch-AMOLED-1.8 1)
 
 # Add the standard library to the build
 
-set(LV_CONF_PATH
-  ${CMAKE_CURRENT_SOURCE_DIR}/lib/LVGL/lv_conf.h
-  CACHE STRING "" FORCE)
+# set(LV_CONF_PATH
+#   ${CMAKE_CURRENT_SOURCE_DIR}/lib/LVGL/lv_conf.h
+#   CACHE STRING "" FORCE)
 add_compile_options(-O2)
 
 
@@ -73,14 +73,14 @@ target_link_libraries(RP2350-Touch-AMOLED-1.8
   # PCF85063A
   # LVGL
   # examples
-  pico_stdlib
-  hardware_pio
-  hardware_pwm
-  hardware_dma
-  hardware_spi
-  hardware_i2c
-  hardware_gpio
-  hardware_adc
+  # pico_stdlib
+  # hardware_pio
+  # hardware_pwm
+  # hardware_dma
+  # hardware_spi
+  # hardware_i2c
+  # hardware_gpio
+  # hardware_adc
 )
 
 # Add the standard include files to the build

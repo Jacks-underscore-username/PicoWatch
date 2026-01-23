@@ -8,6 +8,8 @@
 #include "hardware/pio.h"
 #endif
 
+#include <stdlib.h>
+
 // --------------- //
 // qspi_4wire_data //
 // --------------- //
@@ -17,7 +19,7 @@
 #define qspi_4wire_data_pio_version 0
 
 static const uint16_t qspi_4wire_data_program_instructions[] = {
-            //     .wrap_target
+    //     .wrap_target
     0x7004, //  0: out    pins, 4         side 0
     0xb842, //  1: nop                    side 1
             //     .wrap
@@ -34,11 +36,13 @@ static const struct pio_program qspi_4wire_data_program = {
 #endif
 };
 
-static inline pio_sm_config qspi_4wire_data_program_get_default_config(uint offset) {
-    pio_sm_config c = pio_get_default_sm_config();
-    sm_config_set_wrap(&c, offset + qspi_4wire_data_wrap_target, offset + qspi_4wire_data_wrap);
-    sm_config_set_sideset(&c, 2, true, false);
-    return c;
+static inline pio_sm_config
+qspi_4wire_data_program_get_default_config(uint offset) {
+  pio_sm_config c = pio_get_default_sm_config();
+  sm_config_set_wrap(&c, offset + qspi_4wire_data_wrap_target,
+                     offset + qspi_4wire_data_wrap);
+  sm_config_set_sideset(&c, 2, true, false);
+  return c;
 }
 #endif
 
@@ -51,7 +55,7 @@ static inline pio_sm_config qspi_4wire_data_program_get_default_config(uint offs
 #define qspi_1write_cmd_pio_version 0
 
 static const uint16_t qspi_1write_cmd_program_instructions[] = {
-            //     .wrap_target
+    //     .wrap_target
     0x7001, //  0: out    pins, 1         side 0
     0xb842, //  1: nop                    side 1
             //     .wrap
@@ -68,55 +72,60 @@ static const struct pio_program qspi_1write_cmd_program = {
 #endif
 };
 
-static inline pio_sm_config qspi_1write_cmd_program_get_default_config(uint offset) {
-    pio_sm_config c = pio_get_default_sm_config();
-    sm_config_set_wrap(&c, offset + qspi_1write_cmd_wrap_target, offset + qspi_1write_cmd_wrap);
-    sm_config_set_sideset(&c, 2, true, false);
-    return c;
+static inline pio_sm_config
+qspi_1write_cmd_program_get_default_config(uint offset) {
+  pio_sm_config c = pio_get_default_sm_config();
+  sm_config_set_wrap(&c, offset + qspi_1write_cmd_wrap_target,
+                     offset + qspi_1write_cmd_wrap);
+  sm_config_set_sideset(&c, 2, true, false);
+  return c;
 }
 
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
-static inline void qspi_4wire_data_program_init(PIO pio, uint sm, uint offset, uint pin_scl, uint out_base, uint out_pin_num) {
-    pio_sm_config c = qspi_4wire_data_program_get_default_config( offset );  
-    // CLK
-    pio_gpio_init(pio, pin_scl);
-    pio_sm_set_consecutive_pindirs(pio, sm, pin_scl, 1, true);
-    sm_config_set_sideset_pins(&c, pin_scl);
-    // DAT
-    sm_config_set_out_pins(&c, out_base, out_pin_num);
-    sm_config_set_out_shift(&c, false, true, 8);
-    for (uint32_t pin_offset = 0; pin_offset < out_pin_num; pin_offset++) {
-        pio_gpio_init(pio, out_base + pin_offset);
-    }
-    pio_sm_set_consecutive_pindirs(pio, sm, out_base, out_pin_num, true);
-    // PIO CLK
-    sm_config_set_clkdiv( &c, 1.0f);
-    // INIT
-    pio_sm_init( pio, sm, offset, &c );
-    pio_sm_clear_fifos( pio , sm);
-    pio_sm_set_enabled( pio, sm, true );
+static inline void qspi_4wire_data_program_init(PIO pio, uint sm, uint offset,
+                                                uint pin_scl, uint out_base,
+                                                uint out_pin_num) {
+  pio_sm_config c = qspi_4wire_data_program_get_default_config(offset);
+  // CLK
+  pio_gpio_init(pio, pin_scl);
+  pio_sm_set_consecutive_pindirs(pio, sm, pin_scl, 1, true);
+  sm_config_set_sideset_pins(&c, pin_scl);
+  // DAT
+  sm_config_set_out_pins(&c, out_base, out_pin_num);
+  sm_config_set_out_shift(&c, false, true, 8);
+  for (uint32_t pin_offset = 0; pin_offset < out_pin_num; pin_offset++) {
+    pio_gpio_init(pio, out_base + pin_offset);
+  }
+  pio_sm_set_consecutive_pindirs(pio, sm, out_base, out_pin_num, true);
+  // PIO CLK
+  sm_config_set_clkdiv(&c, 1.0f);
+  // INIT
+  pio_sm_init(pio, sm, offset, &c);
+  pio_sm_clear_fifos(pio, sm);
+  pio_sm_set_enabled(pio, sm, true);
 }
-static inline void qspi_1write_cmd_program_init(PIO pio, uint sm, uint offset, uint pin_scl, uint out_base, uint out_pin_num) {
-    pio_sm_config c = qspi_1write_cmd_program_get_default_config( offset );
-    // CLK
-    pio_gpio_init(pio, pin_scl);
-    pio_sm_set_consecutive_pindirs(pio, sm, pin_scl, 1, true);
-    sm_config_set_sideset_pins(&c, pin_scl);
-    // DAT
-    sm_config_set_out_pins(&c, out_base, out_pin_num);
-    sm_config_set_out_shift(&c, false, true, 8);
-    for (uint32_t pin_offset = 0; pin_offset < out_pin_num; pin_offset++) {
-        pio_gpio_init(pio, out_base + pin_offset);
-    }
-    pio_sm_set_consecutive_pindirs(pio, sm, out_base, out_pin_num, true);
-    // PIO CLK
-    sm_config_set_clkdiv( &c, 1.0f);
-    // INIT
-    pio_sm_init( pio, sm, offset, &c );
-    pio_sm_clear_fifos( pio , sm);
-    pio_sm_set_enabled( pio, sm, true );
+static inline void qspi_1write_cmd_program_init(PIO pio, uint sm, uint offset,
+                                                uint pin_scl, uint out_base,
+                                                uint out_pin_num) {
+  pio_sm_config c = qspi_1write_cmd_program_get_default_config(offset);
+  // CLK
+  pio_gpio_init(pio, pin_scl);
+  pio_sm_set_consecutive_pindirs(pio, sm, pin_scl, 1, true);
+  sm_config_set_sideset_pins(&c, pin_scl);
+  // DAT
+  sm_config_set_out_pins(&c, out_base, out_pin_num);
+  sm_config_set_out_shift(&c, false, true, 8);
+  for (uint32_t pin_offset = 0; pin_offset < out_pin_num; pin_offset++) {
+    pio_gpio_init(pio, out_base + pin_offset);
+  }
+  pio_sm_set_consecutive_pindirs(pio, sm, out_base, out_pin_num, true);
+  // PIO CLK
+  sm_config_set_clkdiv(&c, 1.0f);
+  // INIT
+  pio_sm_init(pio, sm, offset, &c);
+  pio_sm_clear_fifos(pio, sm);
+  pio_sm_set_enabled(pio, sm, true);
 }
 
 #endif
-

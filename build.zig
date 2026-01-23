@@ -26,6 +26,21 @@ pub fn build(b: *std.Build) !void {
 
     firmware.app_mod.linkLibrary(foundationlibc_dep.artifact("foundation"));
 
+    // Create a module for your shim
+    // const dma_shim_module = b.addModule("dma_shim", .{
+    //     .root_source_file = b.path("shims/hardware/dma.zig"),
+    // });
+
+    // Make the shim available to your app
+    // firmware.app_mod.addImport("hardware/dma", dma_shim_module);
+
+    // Also add it as a generic module for C code compatibility
+    // firmware.app_mod.addAnonymousImport("hardware/dma", .{
+    //     .root_source_file = b.path("shims/hardware/dma.zig"),
+    // });
+
+    firmware.app_mod.addIncludePath(b.path("shims"));
+
     const allocator = b.allocator;
 
     var rootDir = try std.fs.cwd().openDir(".", .{ .iterate = true });
