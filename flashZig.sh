@@ -4,6 +4,8 @@ flash() {
 	start=$(date +%s)
 	echo "Putting device in bootloader"
 	sudo picotool reboot -f -u
+	echo "Building"
+	zig build
 	DEVICE=""
 	while [[ -z "$DEVICE" ]]; do
 		echo "Looking for device"
@@ -17,8 +19,6 @@ flash() {
 	mkdir -p "./mnt"
 	echo "Mounting device"
 	sudo mount "$DEVICE" "./mnt"
-	echo "Building"
-	zig build
 	echo "Moving program"
 	sudo cp "zig-out/firmware/blinky.uf2" "./mnt"
 	echo "Unmounting"

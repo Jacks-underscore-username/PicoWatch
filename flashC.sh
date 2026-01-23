@@ -4,6 +4,14 @@ flash() {
 	start=$(date +%s)
 	echo "Putting device in bootloader"
 	sudo picotool reboot -f -u
+	echo "Making build dir"
+	mkdir build -p
+	cd build || exit
+	echo "Building cmake step"
+	cmake .. -G Ninja
+	echo "Building ninja step"
+	ninja
+	cd ..
 	DEVICE=""
 	while [[ -z "$DEVICE" ]]; do
 		echo "Looking for device"
@@ -17,14 +25,6 @@ flash() {
 	mkdir -p "./mnt"
 	echo "Mounting device"
 	sudo mount "$DEVICE" "./mnt"
-	echo "Making build dir"
-	mkdir build -p
-	cd build || exit
-	echo "Building cmake step"
-	cmake .. -G Ninja
-	echo "Building ninja step"
-	ninja
-	cd ..
 	echo "Moving program"
 	sudo cp "build/RP2350-Touch-AMOLED-1.8.uf2" "./mnt"
 	echo "Unmounting"

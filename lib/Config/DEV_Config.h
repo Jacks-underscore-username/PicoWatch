@@ -1,12 +1,12 @@
 /*****************************************************************************
 * | File      	:   DEV_Config.h
-* | Author      :   
+* | Author      :
 * | Function    :   Hardware underlying interface
 * | Info        :
 *----------------
 * |	This version:   V1.0
 * | Date        :   2021-03-16
-* | Info        :   
+* | Info        :
 #
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documnetation files (the "Software"), to deal
@@ -29,32 +29,32 @@
 #ifndef _DEV_CONFIG_H_
 #define _DEV_CONFIG_H_
 
-#include <stdio.h>
-#include <stdlib.h>
-#include "pico/stdlib.h"
-#include "hardware/spi.h"
-#include "hardware/i2c.h"
-#include "hardware/adc.h"
-#include "hardware/pwm.h"
-#include "hardware/gpio.h"
+// #include <stdio.h>
+// #include "hardware/adc.h"
 #include "hardware/dma.h"
+#include "hardware/gpio.h"
+#include "hardware/i2c.h"
 #include "hardware/pio.h"
+#include "hardware/pwm.h"
+#include "hardware/spi.h"
+#include "pico/stdlib.h"
+#include <stdlib.h>
 
 /**
  * data
-**/
-#define UBYTE   uint8_t
-#define UWORD   uint16_t
+ **/
+#define UBYTE uint8_t
+#define UWORD uint16_t
 #define UDOUBLE uint32_t
 
-#define SPI_PORT spi1 
+#define SPI_PORT spi1
 #define I2C_PORT i2c1
 
-#define LCD_CS_PIN   9
+#define LCD_CS_PIN 9
 
-#define DEV_SDA_PIN  6
-#define DEV_SCL_PIN  7
-#define DOF_INT1     8
+#define DEV_SDA_PIN 6
+#define DEV_SCL_PIN 7
+#define DOF_INT1 8
 
 #define Touch_RST_PIN 5
 #define Touch_INT_PIN 4
@@ -80,7 +80,8 @@ void DEV_Delay_us(UDOUBLE xus);
 void DEV_I2C_Write_Byte(uint8_t addr, uint8_t reg, uint8_t Value);
 void DEV_I2C_Write_nByte(uint8_t addr, uint8_t *pData, uint32_t Len);
 uint8_t DEV_I2C_Read_Byte(uint8_t addr, uint8_t reg);
-void DEV_I2C_Read_nByte(uint8_t addr,uint8_t reg, uint8_t *pData, uint32_t Len);
+void DEV_I2C_Read_nByte(uint8_t addr, uint8_t reg, uint8_t *pData,
+                        uint32_t Len);
 
 void DEV_IRQ_SET(uint gpio, uint32_t events, gpio_irq_callback_t callback);
 
@@ -88,6 +89,5 @@ void DEV_SET_PWM(uint8_t Value);
 
 UBYTE DEV_Module_Init(void);
 void DEV_Module_Exit(void);
-
 
 #endif
