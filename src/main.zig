@@ -6,13 +6,9 @@ const screen = @import("screen.zig");
 const rp2xxx = microzig.hal;
 const time = rp2xxx.time;
 
-const arithmetic = @cImport({
-    @cInclude("arithmetic.h");
-});
-
 pub fn main() !void {
     usb.init();
-    screen.init();
+    try screen.init();
 
     var i: u64 = 0;
     var old: u64 = time.get_time_since_boot().to_us();

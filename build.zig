@@ -16,16 +16,16 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
     });
 
-    firmware.app_mod.addIncludePath(b.path("c_lib"));
-    firmware.app_mod.addCSourceFile(.{ .file = b.path("c_lib/arithmetic.c") });
+    // firmware.app_mod.addIncludePath(b.path("c_lib"));
+    // firmware.app_mod.addCSourceFile(.{ .file = b.path("c_lib/arithmetic.c") });
 
-    const foundationlibc_dep = b.dependency("foundation_libc", .{
-        .target = firmware.target.zig_target,
-        .optimize = .Debug,
-        .single_threaded = true,
-    });
+    // const foundationlibc_dep = b.dependency("foundation_libc", .{
+    //     .target = firmware.target.zig_target,
+    //     .optimize = .Debug,
+    //     .single_threaded = true,
+    // });
 
-    firmware.app_mod.linkLibrary(foundationlibc_dep.artifact("foundation"));
+    // firmware.app_mod.linkLibrary(foundationlibc_dep.artifact("foundation"));
 
     mb.install_firmware(firmware, .{});
 }
