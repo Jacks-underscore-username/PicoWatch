@@ -113,9 +113,8 @@ fn write_data1(data: u8) void {
 fn write_data1_multiple(data: []const u8) void {
     dc_data();
     cs_select();
-    for (data) |byte| {
+    for (data) |byte|
         pio.sm_blocking_write(sm, byte);
-    }
     cs_deselect();
 }
 
@@ -216,9 +215,8 @@ fn amoled_clear(color: u16) void {
     var y: u16 = 0;
     while (y < HEIGHT) : (y += 1) {
         var x: u16 = 0;
-        while (x < WIDTH) : (x += 1) {
+        while (x < WIDTH) : (x += 1)
             write_pixel_4wire(color_le);
-        }
     }
 
     cs_deselect();
@@ -228,14 +226,59 @@ fn amoled_clear(color: u16) void {
     initQspi1WriteCmd();
 }
 
+fn QSPI_CMD_Write(val: u32) void {
+    var cmd_buf: [4]u8 = undefined;
+    //   uint8_t cmd_buf[4];
+    // var buf_temp:u8 = undefined;
+    //   uint8_t buf_temp;
+    var i: u2 = 0;
+    while (i < 4) : (i += 1) {
+        //   for (int i = 0; i < 4; ++i) {
+        const bit1: u8 = if (val & (@as(u100, 1) << (2 * i)) > 0) 1 else 0;
+        // uint8_t bit1 = (val & (1 << (2 * i))) ? 1 : 0;
+        const bit2: u8 = if (val & (@as(u100, 1) << (2 * i + 1)) > 0) 1 else 0;
+        // uint8_t bit2 = (val & (1 << (2 * i + 1))) ? 1 : 0;
+        cmd_buf[3 - i] = bit1 | (bit2 << 4);
+    }
+
+    for (cmd_buf) |b|
+        pio.sm_blocking_write(sm, b << 24);
+
+    //   for (int i = 0; i < 4; i++) {
+    //     QSPI_PIO_Write(qspi, cmd_buf[i]);
+    //   }
+}
+
+fn QSPI_REGISTER_Write(addr: u32) void {
+    // 1 WIRE CMD
+    QSPI_CMD_Write(0x02);
+
+    // 1 WIRE ADDR
+    QSPI_CMD_Write(0x00);
+    QSPI_CMD_Write(addr);
+    QSPI_CMD_Write(0x00);
+}
+
 // Set brightness (0-100)
 fn amoled_set_brightness(brightness: u8) void {
     var b = brightness;
     if (b > 100) b = 100;
-    const scaled = b * 255 / 100;
+    // const scaled = b * 255 / 100;
 
-    write_command(0x51);
-    write_data1(scaled);
+    // dc_command();
+    // cs_select();
+    // pio.sm_blocking_write(sm, 0x51);
+    // dc_data();
+    // // pio.sm_blocking_write(sm, scaled);
+    // cs_deselect();
+
+    // write_command(0x51);
+    // write_data1(scaled);
+
+    cs_select();
+    QSPI_REGISTER_Write(0x51);
+    // QSPI_CMD_Write(brightness);
+    cs_deselect();
 }
 
 // Initialize the display
@@ -331,23 +374,23 @@ pub fn main() !void {
     rp2xxx.time.sleep_ms(1000);
 
     // Set brightness to 50%
-    // amoled_set_brightness(50);
+    amoled_set_brightness(50);
 
     // Clear screen with different colors
-    amoled_clear(0x0000); // Black
-    rp2xxx.time.sleep_ms(1000);
+    // amoled_clear(0x0000); // Black
+    // rp2xxx.time.sleep_ms(1000);
 
-    amoled_clear(0xF800); // Red
-    rp2xxx.time.sleep_ms(1000);
+    // amoled_clear(0xF800); // Red
+    // rp2xxx.time.sleep_ms(1000);
 
-    amoled_clear(0x07E0); // Green
-    rp2xxx.time.sleep_ms(1000);
+    // amoled_clear(0x07E0); // Green
+    // rp2xxx.time.sleep_ms(1000);
 
-    amoled_clear(0x001F); // Blue
-    rp2xxx.time.sleep_ms(1000);
+    // amoled_clear(0x001F); // Blue
+    // rp2xxx.time.sleep_ms(1000);
 
     amoled_clear(0xFFFF); // White
-    rp2xxx.time.sleep_ms(1000);
+    // rp2xxx.time.sleep_ms(1000);
 
     // amoled_clear(0x0000); // Black
 
@@ -357,6 +400,6 @@ pub fn main() !void {
 }
 
 pub fn init() !void {
-    // try main();
-    qspi_pio.QSPI_GPIO_Init();
+    try main();
+    // qspi_pio.QSPI_GPIO_Init();
 }
