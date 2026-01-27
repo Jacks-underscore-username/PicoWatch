@@ -31,6 +31,8 @@
 
 // #include <stdio.h>
 // #include "hardware/adc.h"
+#include <stdint.h>
+
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
 #include "hardware/i2c.h"

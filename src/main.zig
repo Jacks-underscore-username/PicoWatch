@@ -1,9 +1,9 @@
 const std = @import("std");
 const microzig = @import("microzig");
 
-const arithmetic = @cImport({
-    @cInclude("arithmetic.h");
-});
+// const arithmetic = @cImport({
+//     @cInclude("arithmetic.h");
+// });
 
 const rp2xxx = microzig.hal;
 const time = rp2xxx.time;
@@ -95,7 +95,7 @@ pub fn main() !void {
                 i += 1;
                 std.log.info("cdc test: {}", .{i});
 
-                usb_cdc_write(&drivers.serial, "This is very very long text sent from RP Pico by USB CDC to your device: {}\r\n", .{arithmetic.mult(@intCast(i), 10)});
+                usb_cdc_write(&drivers.serial, "This is very very long text sent from RP Pico by USB CDC to your device: {}\r\n", .{i});
             }
 
             // read and print host command if present

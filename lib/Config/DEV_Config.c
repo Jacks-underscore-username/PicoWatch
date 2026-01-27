@@ -26,6 +26,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 ******************************************************************************/
+#include <stdint.h>
+
 #include "DEV_Config.h"
 #include "qspi_pio.h"
 

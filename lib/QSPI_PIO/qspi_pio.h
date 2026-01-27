@@ -29,6 +29,8 @@
 #ifndef _QSPI_PIO_H_
 #define _QSPI_PIO_H_
 
+#include <stdint.h>
+
 #include "qspi.pio.h"
 #include "hardware/pio.h"
 #include "hardware/gpio.h"
