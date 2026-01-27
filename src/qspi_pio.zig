@@ -6,7 +6,7 @@ const Pin = gpio.Pin;
 const Pio = rp2xxx.pio.Pio;
 const StateMachine = rp2xxx.pio.StateMachine;
 
-const pio_qspi = struct {
+pub const pio_qspi = struct {
     pio: Pio,
     sm: StateMachine,
     sm_4wire: StateMachine,
@@ -21,7 +21,7 @@ const pio_qspi = struct {
     pin_rst: Pin,
 };
 
-const qspi: pio_qspi = .{
+pub var qspi: pio_qspi = .{
     .pio = .pio0,
     .sm = StateMachine.sm0,
     .sm_4wire = StateMachine.sm0,
@@ -60,7 +60,7 @@ const qspi_1write_cmd_program = blk: {
     , .{}).get_program_by_name("qspi_1write_cmd");
 };
 
-fn QSPI_GPIO_Init() void {
+pub fn QSPI_GPIO_Init() void {
     qspi.pin_cs.set_function(.spi);
     qspi.pin_cs.set_pull(.down);
     qspi.pin_cs.set_direction(.out);
@@ -74,30 +74,29 @@ fn QSPI_GPIO_Init() void {
     qspi.pin_rst.set_direction(.out);
 }
 
-fn QSPI_Select() void {
+pub fn QSPI_Select() void {
     qspi.pin_cs.put(0);
 }
 
-fn QSPI_Deselect() void {
+pub fn QSPI_Deselect() void {
     qspi.pin_cs.put(1);
 }
 
-fn qspi_4wire_data_program_get_default_config(offset: u5) rp2xxx.pio.StateMachineInitOptions {
+pub fn qspi_4wire_data_program_get_default_config(offset: u5) rp2xxx.pio.StateMachineInitOptions {
     //TODO: Do I need to use offset?
     _ = offset;
     return .{};
 }
 
-fn qspi_4wire_data_program_init(sm: StateMachine, offset: u5, pin_scl: Pin, out_base: Pin, out_pin_num: comptime_int) void {
-    const c = qspi_4wire_data_program_get_default_config(offset);
+pub fn qspi_4wire_data_program_init(sm: StateMachine, offset: u5, pin_scl: Pin, out_base: Pin, out_pin_num: comptime_int) !void {
+    var c = qspi_4wire_data_program_get_default_config(offset);
     // pio_sm_config c = qspi_4wire_data_program_get_default_config( offset );
     // CLK
 
     qspi.pio.gpio_init(pin_scl);
     // pio_gpio_init(pio, pin_scl);
 
-    //TODO: What direction is `true`?
-    qspi.pio.sm_set_pindir(sm, pin_scl, 1, .out);
+    try qspi.pio.sm_set_pindir(sm, pin_scl, 1, .out);
     // pio_sm_set_consecutive_pindirs(pio, sm, pin_scl, 1, true);
 
     c.pin_mappings.side_set = .single(pin_scl);
@@ -116,7 +115,6 @@ fn qspi_4wire_data_program_init(sm: StateMachine, offset: u5, pin_scl: Pin, out_
     // for (uint32_t pin_offset = 0; pin_offset < out_pin_num; pin_offset++) {
     //     pio_gpio_init(pio, out_base + pin_offset);
     // }
-    //TODO: What direction is `true`?
     qspi.pio.sm_set_pindir(sm, out_base, out_pin_num, .out);
     // pio_sm_set_consecutive_pindirs(pio, sm, out_base, out_pin_num, true);
     // PIO CLK
@@ -131,9 +129,9 @@ fn qspi_4wire_data_program_init(sm: StateMachine, offset: u5, pin_scl: Pin, out_
     // pio_sm_set_enabled( pio, sm, true );
 }
 
-fn QSPI_PIO_Init() !void {
+pub fn QSPI_PIO_Init() !void {
     const offset = try qspi.pio.add_program(qspi_4wire_data_program);
-    qspi_4wire_data_program_init(qspi.sm_4wire, offset, qspi.pin_sclk, qspi.pin_dio0, 4);
+    try qspi_4wire_data_program_init(qspi.sm_4wire, offset, qspi.pin_sclk, qspi.pin_dio0, 4);
 
     qspi.pio.sm_set_enabled(qspi.sm_4wire, false);
     qspi.pio.sm_set_enabled(qspi.sm_1wire, false);
@@ -141,42 +139,40 @@ fn QSPI_PIO_Init() !void {
     // pio_sm_set_enabled(qspi.pio, qspi.sm_1wire, false);
 }
 
-fn QSPI_1Wrie_Mode() void {
+pub fn QSPI_1Wrie_Mode() void {
     qspi.pio.sm_set_enabled(qspi.sm_4wire, false);
     qspi.pio.sm_set_enabled(qspi.sm_1wire, true);
     qspi.sm = qspi.sm_1wire;
 }
 
-fn QSPI_4Wrie_Mode() void {
+pub fn QSPI_4Wrie_Mode() void {
     qspi.pio.sm_set_enabled(qspi.sm_4wire, true);
     qspi.pio.sm_set_enabled(qspi.sm_1wire, false);
     qspi.sm = qspi.sm_4wire;
 }
 
-fn QSPI_PIO_Write(val: u32) void {
+pub fn QSPI_PIO_Write(val: u32) void {
     qspi.pio.sm_blocking_write(qspi.sm, val << 24);
 }
 
-fn QSPI_DATA_Write(val: u32) void {
-    const cmd_buf: [4]u8 = undefined;
-    var i: u2 = 0;
-    while (i < 4) : (i += 1) {
+pub fn QSPI_DATA_Write(val: u32) void {
+    var cmd_buf: [4]u8 = undefined;
+    inline for (0..4) |i| {
         const bit1: u8 = if (val & (1 << (2 * i)) > 0) 1 else 0;
         const bit2: u8 = if (val & (1 << (2 * i + 1)) > 0) 1 else 0;
         cmd_buf[3 - i] = bit1 | (bit2 << 4);
     }
 
-    i = 0;
-    while (i < 4) : (i += 1) {
+    inline for (0..4) |i| {
         QSPI_PIO_Write(cmd_buf[i]);
     }
 }
 
-fn QSPI_CMD_Write(val: u32) void {
+pub fn QSPI_CMD_Write(val: u32) void {
     QSPI_DATA_Write(val);
 }
 
-fn QSPI_REGISTER_Write(addr: u32) void {
+pub fn QSPI_REGISTER_Write(addr: u32) void {
     // 1 WIRE CMD
     QSPI_CMD_Write(0x02);
 
@@ -186,7 +182,7 @@ fn QSPI_REGISTER_Write(addr: u32) void {
     QSPI_DATA_Write(0x00);
 }
 
-fn QSPI_Pixel_Write(addr: u32) void {
+pub fn QSPI_Pixel_Write(addr: u32) void {
     // 1 WIRE CMD
     QSPI_CMD_Write(0x32);
 

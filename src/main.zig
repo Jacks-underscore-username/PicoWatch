@@ -2,13 +2,26 @@ const std = @import("std");
 const microzig = @import("microzig");
 const usb = @import("usb.zig");
 const screen = @import("screen.zig");
+const Qspi = @import("qspi_pio.zig");
+const AMOLED_1in8 = @import("AMOLED_1in8.zig");
+const Dev = @import("DEV_Config.zig");
 
 const rp2xxx = microzig.hal;
 const time = rp2xxx.time;
 
 pub fn main() !void {
     usb.init();
-    try screen.init();
+
+    Dev.DEV_Module_Init();
+
+    Qspi.QSPI_GPIO_Init();
+    try Qspi.QSPI_PIO_Init();
+    Qspi.QSPI_4Wrie_Mode();
+
+    AMOLED_1in8.AMOLED_1IN8_Init();
+    AMOLED_1in8.AMOLED_1IN8_SetBrightness(100);
+
+    // try screen.init();
 
     var i: u64 = 0;
     var old: u64 = time.get_time_since_boot().to_us();
