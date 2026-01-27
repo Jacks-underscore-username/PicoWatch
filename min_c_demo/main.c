@@ -15,6 +15,7 @@ int main(void) {
   QSPI_GPIO_Init(qspi);
   QSPI_PIO_Init(qspi);
   QSPI_4Wrie_Mode(&qspi);
+
   AMOLED_1IN8_Init();
   AMOLED_1IN8_SetBrightness(100);
   AMOLED_1IN8_Clear(RED);

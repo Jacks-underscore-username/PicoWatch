@@ -3,8 +3,8 @@
     .version = "0.0.0",
     .dependencies = .{
         .microzig = .{
-            .url = "https://codeload.github.com/piotrfila/microzig/zip/1a1aab8d48e81b12a072c20ca9da2a6c302c2192",
-            .hash = "microzig-0.15.0-D20YSdSd0wAtGugLXJ6bTroJDn9JDC80qqttTo6Zo05X",
+            .url = "https://codeload.github.com/ZigEmbeddedGroup/microzig/zip/3459775940e4f6d0148b6e5d0a98fc7c5d8e7607",
+            .hash = "microzig-0.15.0-D20YSX1T3ADHdHs21O_xm-5JdCKiXTtsrKk1ziJv1CK2",
         },
         .foundation_libc = .{
             .url = "https://github.com/ZigEmbeddedGroup/microzig/releases/download/0.15.0/foundationlibc.tar.gz",
