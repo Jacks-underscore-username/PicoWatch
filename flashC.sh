@@ -5,7 +5,7 @@ flash() {
 	echo "Putting device in bootloader"
 	sudo picotool reboot -f -u
 	echo "Moving to C dir"
-	cd c_reference_code || exit
+	cd min_c_demo || exit
 	echo "Making build dir"
 	mkdir build -p
 	cd build || exit
@@ -30,7 +30,7 @@ flash() {
 	echo "Mounting device"
 	sudo mount "$DEVICE" "./mnt"
 	echo "Moving program"
-	sudo cp "c_reference_code/build/RP2350-Touch-AMOLED-1.8.uf2" "./mnt"
+	sudo cp "min_c_demo/build/RP2350-Touch-AMOLED-1.8.uf2" "./mnt"
 	echo "Unmounting"
 	sudo umount "$DEVICE"
 	echo "Removing mount point"
