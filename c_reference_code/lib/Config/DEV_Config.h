@@ -60,7 +60,7 @@
 #define Touch_INT_PIN 4
 
 extern uint dma_tx;
-extern dma_channel_config c;
+extern dma_channel_config dma_config;
 
 /*------------------------------------------------------------------------------------------------------*/
 void DEV_Digital_Write(UWORD Pin, UBYTE Value);

@@ -65,8 +65,8 @@ void QSPI_Deselect(pio_qspi_t qspi);
 void QSPI_PIO_Init(pio_qspi_t qspi);
 void QSPI_1Wrie_Mode(pio_qspi_t *qspi);
 void QSPI_4Wrie_Mode(pio_qspi_t *qspi);
-void QSPI_DATA_Write(pio_qspi_t qspi, uint32_t val);
-void QSPI_REGISTER_Write(pio_qspi_t qspi, uint32_t addr);
+void data_write(pio_qspi_t qspi, uint32_t val);
+void register_write(pio_qspi_t qspi, uint32_t addr);
 void QSPI_Pixel_Write(pio_qspi_t qspi, uint32_t addr);
 
 #endif // _QSPI_PIO_H

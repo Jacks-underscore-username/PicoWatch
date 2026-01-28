@@ -12,20 +12,13 @@ project(RP2350-Touch-AMOLED-1.8 C CXX ASM)
 
 pico_sdk_init()
 
-aux_source_directory(. DIR)
-
-add_executable(RP2350-Touch-AMOLED-1.8 ${DIR})
-
-pico_generate_pio_header(RP2350-Touch-AMOLED-1.8 ${CMAKE_CURRENT_LIST_DIR}/qspi.pio
-  OUTPUT_DIR ${CMAKE_CURRENT_LIST_DIR})
+add_executable(RP2350-Touch-AMOLED-1.8 main.c)
 
 pico_set_program_name(RP2350-Touch-AMOLED-1.8 "RP2350-Touch-AMOLED-1.8")
 pico_set_program_version(RP2350-Touch-AMOLED-1.8 "0.1")
 
 pico_enable_stdio_uart(RP2350-Touch-AMOLED-1.8 0)
 pico_enable_stdio_usb(RP2350-Touch-AMOLED-1.8 1)
-
-add_compile_options(-O2)
 
 target_link_libraries(RP2350-Touch-AMOLED-1.8
   pico_stdlib
