@@ -351,6 +351,20 @@ pub inline fn isInRange(x: u16, y: u16) bool {
     return x >= 0 and x < WIDTH and y >= 0 and y < HEIGHT;
 }
 
+pub fn addInRange(a: u16, b: u16) u16 {
+    return @min(WIDTH - 1, a + b);
+}
+
+pub fn subInRange(a: u16, b: u16) u16 {
+    const res: struct { u16, u1 } = @subWithOverflow(a, b);
+    if (res[1] == 1) return 0;
+    return res[0];
+}
+
+pub fn difference(comptime T: type, a: T, b: T) T {
+    return if (a > b) a - b else b - a;
+}
+
 pub fn pixel(image: *[PIXEL_COUNT]u16, x: u16, y: u16, color: u16) void {
     if (isInRange(x, y))
         image.*[x + y * WIDTH] = color >> 8 | (color & 0xff) << 8;
@@ -363,14 +377,15 @@ pub fn rect(image: *[PIXEL_COUNT]u16, x: u16, y: u16, width: u16, height: u16, c
     }
 }
 
-// pub fn circle(image: *[PIXEL_COUNT]u16, x: u16, y: u16, r: u16, color: u16) void {
-//     for (0..r * 2) |xo| {
-//         for (0..r * 2) |yo|
-//             if (math.sqrt(math.pow(u16, @as(u16, @intCast(@abs(xo - r))), 2) +
-//                 math.pow(u16, @as(u16, @intCast(@abs(yo - r))), 2)) <= r)
-//                 pixel(image, x + @as(u16, @intCast(@abs(xo - r))), y + @as(u16, @intCast(@abs(yo - r))), color);
-//     }
-// }
+pub fn circle(image: *[PIXEL_COUNT]u16, x: u16, y: u16, r: u16, color: u16) void {
+    for (subInRange(x, r)..addInRange(x, r)) |x2| {
+        for (subInRange(y, r)..addInRange(y, r)) |y2| {
+            const d = @sqrt(@as(f64, @floatFromInt(math.pow(u16, difference(u16, x, @intCast(x2)), 2) + math.pow(u16, difference(u16, y, @intCast(y2)), 2))));
+            if (d <= @as(@TypeOf(d), @floatFromInt(r)))
+                pixel(image, @intCast(x2), @intCast(y2), color);
+        }
+    }
+}
 
 pub fn fill(image: *[PIXEL_COUNT]u16, color: u16) void {
     for (0..PIXEL_COUNT) |i| image.*[i] = color >> 8 | (color & 0xff) << 8;
