@@ -72,18 +72,18 @@ pub fn ready() bool {
 }
 
 pub fn log(comptime fmt: []const u8, args: anytype) void {
-    usb_cdc_write(&(usb_controller.drivers().?).serial, fmt, args);
+    usbCdcWrite(&(usb_controller.drivers().?).serial, fmt, args);
 }
 
 pub fn read() []const u8 {
-    return usb_cdc_read(&(usb_controller.drivers().?).serial);
+    return usbCdcRead(&(usb_controller.drivers().?).serial);
 }
 
 var usb_tx_buff: [1024]u8 = undefined;
 
 // Transfer data to host
 // NOTE: After each USB chunk transfer, we have to call the USB task so that bus TX events can be handled
-fn usb_cdc_write(serial: *USB_Serial, comptime fmt: []const u8, args: anytype) void {
+fn usbCdcWrite(serial: *USB_Serial, comptime fmt: []const u8, args: anytype) void {
     var tx = std.fmt.bufPrint(&usb_tx_buff, fmt, args) catch &.{};
 
     while (tx.len > 0) {
@@ -99,7 +99,7 @@ var usb_rx_buff: [1024]u8 = undefined;
 
 // Receive data from host
 // NOTE: Read code was not tested extensively. In case of issues, try to call USB task before every read operation
-fn usb_cdc_read(serial: *USB_Serial) []const u8 {
+fn usbCdcRead(serial: *USB_Serial) []const u8 {
     var rx_len: usize = 0;
 
     while (true) {

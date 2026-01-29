@@ -5,7 +5,7 @@ flash() {
 	echo "Putting device in bootloader"
 	sudo picotool reboot -f -u
 	echo "Moving to C dir"
-	cd min_c_demo || exit
+	cd c_reference_code || exit
 	echo "Making build dir"
 	mkdir build -p
 	cd build || exit
@@ -14,7 +14,7 @@ flash() {
 	echo "Building ninja step"
 	ninja
 	# shellcheck disable=SC2010
-	size=$(ls -sh build/RP2350-Touch-AMOLED-1.8.uf2 | grep -Po "^(.+)\s")
+	size=$(ls -sh RP2350-Touch-AMOLED-1.8.uf2 | grep -Po "^(.+)\s")
 	echo "Resulting file size: ${size}"
 	cd ..
 	echo "Going back to root dir"
@@ -33,7 +33,7 @@ flash() {
 	echo "Mounting device"
 	sudo mount "$DEVICE" "./mnt"
 	echo "Moving program"
-	sudo cp "min_c_demo/build/RP2350-Touch-AMOLED-1.8.uf2" "./mnt"
+	sudo cp "c_reference_code/build/RP2350-Touch-AMOLED-1.8.uf2" "./mnt"
 	echo "Unmounting"
 	sudo umount "$DEVICE"
 	echo "Removing mount point"

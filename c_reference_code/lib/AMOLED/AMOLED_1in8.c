@@ -26,8 +26,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
 ******************************************************************************/
-#include "AMOLED_1in8.h"
 #include "DEV_Config.h"
+#include "AMOLED_1in8.h"
 
 AMOLED_1IN8_ATTRIBUTES AMOLED_1IN8;
 
