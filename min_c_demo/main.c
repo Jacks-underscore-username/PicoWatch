@@ -228,6 +228,12 @@ int main(void) {
   data_write(qspi, 0x2c);
   data_write(qspi, 0x00);
 
+  for (uint16_t i = 0; i < HEIGHT; i++)
+    printf("image[%d]: %d\r\n", i, image[i]);
+  printf("read_addr: %d\r\n", partial_image);
+
+  printf("dreq: %d\r\n", pio_get_dreq(qspi.pio, qspi.sm, true));
+
   channel_config_set_dreq(&dma_config, pio_get_dreq(qspi.pio, qspi.sm, true));
   for (int i = 0; i < HEIGHT; i++) {
     dma_channel_configure(
@@ -246,5 +252,6 @@ int main(void) {
   gpio_put(qspi.pin_cs, 1);
 
   while (true) {
+    sleep_ms(1);
   }
 }

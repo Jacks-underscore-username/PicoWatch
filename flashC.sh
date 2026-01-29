@@ -13,6 +13,9 @@ flash() {
 	cmake .. -G Ninja
 	echo "Building ninja step"
 	ninja
+	# shellcheck disable=SC2010
+	size=$(ls -sh build/RP2350-Touch-AMOLED-1.8.uf2 | grep -Po "^(.+)\s")
+	echo "Resulting file size: ${size}"
 	cd ..
 	echo "Going back to root dir"
 	cd ..
@@ -48,4 +51,10 @@ if [[ $* == *--watch* ]]; then
 	find . -type f | grep -P '^(?!\./\.zig-cache)(?!\./build).*\.(?:[ch]|zig)$' | entr -d bash -c "clear && flash && echo 'Watching for changes in C / zig files'"
 else
 	flash
+	if [[ $* == *--listen* ]]; then
+		while [ ! -e "/dev/ttyACM0" ]; do
+			sleep 0.25
+		done
+		picocom -q /dev/ttyACM0
+	fi
 fi

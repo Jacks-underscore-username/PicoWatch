@@ -6,6 +6,9 @@ flash() {
 	sudo picotool reboot -f -u
 	echo "Building"
 	zig build
+	# shellcheck disable=SC2010
+	size=$(ls -sh zig-out/firmware/program.uf2 | grep -Po "^(.+)\s")
+	echo "Resulting file size: ${size}"
 	DEVICE=""
 	while [[ -z "$DEVICE" ]]; do
 		echo "Looking for device"
@@ -20,7 +23,7 @@ flash() {
 	echo "Mounting device"
 	sudo mount "$DEVICE" "./mnt"
 	echo "Moving program"
-	sudo cp "zig-out/firmware/blinky.uf2" "./mnt"
+	sudo cp "zig-out/firmware/program.uf2" "./mnt"
 	echo "Unmounting"
 	sudo umount "$DEVICE"
 	echo "Removing mount point"
@@ -38,4 +41,10 @@ if [[ $* == *--watch* ]]; then
 	find . -type f | grep -P '^(?!\./\.zig-cache)(?!\./build).*\.(?:[ch]|zig)$' | entr -d bash -c "clear && flash && echo 'Watching for changes in C / zig files'"
 else
 	flash
+	if [[ $* == *--listen* ]]; then
+		while [ ! -e "/dev/ttyACM0" ]; do
+			sleep 0.25
+		done
+		picocom -q /dev/ttyACM0
+	fi
 fi
