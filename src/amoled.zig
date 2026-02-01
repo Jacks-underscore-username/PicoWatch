@@ -195,6 +195,8 @@ inline fn select() void {
 }
 
 inline fn deselect() void {
+    // Without this line builds in release mode don't write to the display.
+    time.sleep_us(0);
     config.pin_cs.put(1);
 }
 
@@ -415,11 +417,9 @@ pub fn writeImage(image: *[PIXEL_COUNT]ColorSize) !void {
     select();
     pixelWrite(0x2c);
 
-    const read_addr = @intFromPtr(@as(*volatile [PIXEL_COUNT]ColorSize, image));
-
     dma_tx.setup_transfer_raw(
         @intFromPtr(config.pio.sm_get_tx_fifo(config.sm)),
-        read_addr,
+        @intFromPtr(@as(*volatile [PIXEL_COUNT]ColorSize, image)),
         PIXEL_COUNT * if (ColorSize == u16) 2 else 3,
         dma_config,
     );
@@ -471,7 +471,7 @@ pub fn difference(comptime T: type, a: T, b: T) T {
 
 pub fn pixel(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, color: ColorSize) void {
     if (isInRange(x, y))
-        image.*[x + @as(u32, y) * WIDTH] = color >> 8 | (color & 0xff) << 8;
+        image.*[x + @as(u32, y) * WIDTH] = @byteSwap(color);
 }
 
 pub fn rect(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, width: u16, height: u16, color: ColorSize) void {

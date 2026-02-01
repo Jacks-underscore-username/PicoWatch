@@ -18,17 +18,18 @@ const Ball = struct {
     r: u16,
 };
 
-var startTimes: std.StringHashMap(microzig.drivers.time.Absolute) = undefined;
+var startTimes: std.StringHashMap(if (use_emulator) i64 else microzig.drivers.time.Absolute) = undefined;
 
 pub fn startTiming(comptime key: []const u8) void {
-    startTimes.put(key, time.get_time_since_boot()) catch {
+    const now = if (use_emulator) std.time.microTimestamp() else time.get_time_since_boot();
+    startTimes.put(key, now) catch {
         unreachable;
     };
 }
 
 pub fn endTiming(comptime key: []const u8) void {
     defer _ = startTimes.remove(key);
-    const diff = time.get_time_since_boot().diff(startTimes.get(key).?).to_us();
+    const diff: u64 = if (use_emulator) @intCast(std.time.microTimestamp() - startTimes.get(key).?) else time.get_time_since_boot().diff(startTimes.get(key).?).to_us();
     if (diff < 1_000) {
         usb.log("{s} took {} US. ", .{ key, diff });
     } else if (diff < 1_000_000) {
@@ -39,7 +40,16 @@ pub fn endTiming(comptime key: []const u8) void {
 }
 
 pub fn main() !void {
-    var gpa = try microzig.Allocator.init_with_heap(1_000);
+    var gpa = blk: {
+        if (use_emulator) {
+            const gpa: std.heap.DebugAllocator(.{}) = .init;
+            break :blk gpa;
+        }
+        break :blk microzig.Allocator.init_with_heap(1_000) catch {
+            unreachable;
+        };
+    };
+
     const alloc = gpa.allocator();
 
     startTimes = .init(alloc);
@@ -50,11 +60,8 @@ pub fn main() !void {
     try amoled.init();
     defer amoled.deinit();
 
-    var image: [amoled.PIXEL_COUNT]amoled.ColorSize = undefined;
-    const image_ptr: *align(@alignOf(amoled.ColorSize)) [amoled.PIXEL_COUNT]amoled.ColorSize = @alignCast(&image);
-    usb.log("{} is_aligned: {}\r\n", .{ @intFromPtr(image_ptr), std.mem.isAligned(@intFromPtr(image_ptr), @alignOf(amoled.ColorSize)) });
-    amoled.fill(image_ptr, @intFromEnum(if (amoled.ColorSize == u16) amoled.Colors.Red else amoled.Colors2.Red));
-    try amoled.writeImage(image_ptr);
+    var image: [amoled.PIXEL_COUNT]amoled.ColorSize align(@alignOf(amoled.ColorSize)) = undefined;
+    try amoled.writeImage(&image);
 
     var random = blk: {
         if (use_emulator) {
@@ -68,7 +75,7 @@ pub fn main() !void {
         }
     };
 
-    var balls: [25]Ball = undefined;
+    var balls: [100]Ball = undefined;
     for (0..balls.len) |i|
         balls[i] = .{
             .x = random.intRangeLessThan(u16, 50, amoled.WIDTH - 50),
@@ -88,7 +95,7 @@ pub fn main() !void {
         endTiming("Poll");
 
         startTiming("Fill");
-        amoled.fill(image_ptr, @intFromEnum(amoled.Colors.Black));
+        amoled.fill(&image, @intFromEnum(amoled.Colors.Black));
         endTiming("Fill");
 
         startTiming("Move");
@@ -105,11 +112,11 @@ pub fn main() !void {
         endTiming("Move");
 
         startTiming("Circles");
-        for (&balls) |*ball| amoled.circle(image_ptr, ball.x, ball.y, ball.r, ball.color);
+        for (&balls) |*ball| amoled.circle(&image, ball.x, ball.y, ball.r, ball.color);
         endTiming("Circles");
 
         startTiming("Write");
-        try amoled.writeImage(image_ptr);
+        try amoled.writeImage(&image);
         endTiming("Write");
 
         endTiming("Total");
