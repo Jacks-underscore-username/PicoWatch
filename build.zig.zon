@@ -10,6 +10,10 @@
             .url = "https://github.com/ZigEmbeddedGroup/microzig/releases/download/0.15.0/foundationlibc.tar.gz",
             .hash = "foundationlibc-0.0.0-LAEuPBSUAADFBlOX_qREU1LhVz1sks7kctv5lXTIIdU3",
         },
+        .sdl3 = .{
+            .url = "git+https://codeberg.org/7Games/zig-sdl3?ref=v0.1.7#318706d40fd56dbc67ad58a5a1be5c935ceb8585",
+            .hash = "sdl3-0.1.7-NmT1Q00HJwBQEXnwv_YWydIXUCKazlnPDACaXwwVQoHo",
+        },
     },
     .paths = .{""},
     .fingerprint = 0x4feb9780b45fe3e3,

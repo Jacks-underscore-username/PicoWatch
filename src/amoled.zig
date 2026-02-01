@@ -1,14 +1,19 @@
 const std = @import("std");
 const microzig = @import("microzig");
+const sdl3 = @import("sdl3");
+const usb = @import("usb.zig");
+const main = @import("main.zig");
+const use_emulator = @import("build_options").use_emulator;
 
 const math = std.math;
-const rp2xxx = microzig.hal;
-const time = rp2xxx.time;
-const dma = rp2xxx.dma;
-const gpio = rp2xxx.gpio;
+const mem = std.mem;
+const hal = microzig.hal;
+const time = hal.time;
+const dma = hal.dma;
+const gpio = hal.gpio;
 const Pin = gpio.Pin;
-const Pio = rp2xxx.pio.Pio;
-const StateMachine = rp2xxx.pio.StateMachine;
+const Pio = hal.pio.Pio;
+const StateMachine = hal.pio.StateMachine;
 
 const fourWireDataWrapTarget = 0;
 const fourWireDataWrap = 1;
@@ -18,27 +23,46 @@ pub const WIDTH = 368;
 pub const HEIGHT = 448;
 pub const PIXEL_COUNT = WIDTH * HEIGHT;
 
-pub const WHITE: u16 = 0xFFFF;
-pub const BLACK: u16 = 0x0000;
-pub const BLUE: u16 = 0x001F;
-pub const BRED: u16 = 0xF81F;
-pub const GRED: u16 = 0xFFE0;
-pub const GBLUE: u16 = 0x07FF;
-pub const RED: u16 = 0xF800;
-pub const MAGENTA: u16 = 0xF81F;
-pub const GREEN: u16 = 0x07E0;
-pub const CYAN: u16 = 0x7FFF;
-pub const YELLOW: u16 = 0xFFE0;
-pub const BROWN: u16 = 0xBC40;
-pub const BRRED: u16 = 0xFC07;
-pub const GRAY: u16 = 0x8430;
-pub const DARKBLUE: u16 = 0x01CF;
-pub const LIGHTBLUE: u16 = 0x7D7C;
-pub const GRAYBLUE: u16 = 0x5458;
-pub const LIGHTGREEN: u16 = 0x841F;
-pub const LGRAY: u16 = 0xC618;
-pub const LGRAYBLUE: u16 = 0xA651;
-pub const LBBLUE: u16 = 0x2B12;
+pub const DIRECTION = enum(@TypeOf(@max(WIDTH, HEIGHT))) {
+    X = WIDTH,
+    Y = HEIGHT,
+};
+
+pub const ColorSize = if (true) u16 else u24;
+
+pub const Colors = enum(u16) {
+    White = 0xFFFF,
+    Black = 0x0000,
+    Blue = 0x001F,
+    Gblue = 0x07FF,
+    Red = 0xF800,
+    Magenta = 0xF81F,
+    Green = 0x07E0,
+    Cyan = 0x7FFF,
+    Yellow = 0xFFE0,
+    Brown = 0xBC40,
+    Brred = 0xFC07,
+    Gray = 0x8430,
+    Darkblue = 0x01CF,
+    Lightblue = 0x7D7C,
+    Grayblue = 0x5458,
+    Lightgreen = 0x841F,
+    Lgray = 0xC618,
+    Lgrayblue = 0xA651,
+    Lbblue = 0x2B12,
+};
+
+pub const Colors2 = enum(u24) {
+    White = 0xFFFFFF,
+    Grey = 0x666666,
+    Black = 0x000000,
+    Red = 0xFF0000,
+    Yellow = 0xFFFF00,
+    Green = 0x00FF00,
+    Cyan = 0x00FFFF,
+    Blue = 0x0000FF,
+    Purple = 0xFF00FF,
+};
 
 const AmoledConfig = struct {
     pio: Pio,
@@ -72,7 +96,7 @@ const config: AmoledConfig = .{
 
 const four_wire_data_program = blk: {
     @setEvalBranchQuota(3000);
-    break :blk rp2xxx.pio.assemble(
+    break :blk hal.pio.assemble(
         \\.program qspi4wireData
         \\.side_set 1 opt
         \\.wrap_target
@@ -84,7 +108,7 @@ const four_wire_data_program = blk: {
 
 const one_wire_cmd_program = blk: {
     @setEvalBranchQuota(3000);
-    break :blk rp2xxx.pio.assemble(
+    break :blk hal.pio.assemble(
         \\.program qspi1writeCmd
         \\.side_set 1 opt
         \\.wrap_target
@@ -93,6 +117,10 @@ const one_wire_cmd_program = blk: {
         \\.wrap
     , .{}).get_program_by_name("qspi1writeCmd");
 };
+
+var window: sdl3.video.Window = undefined;
+var renderer: sdl3.render.Renderer = undefined;
+const init_flags = sdl3.InitFlags{ .video = true };
 
 var dma_tx: dma.Channel = undefined;
 const dma_config: dma.Channel.TransferConfig = .{
@@ -120,6 +148,7 @@ const dma_config: dma.Channel.TransferConfig = .{
 
 fn dataWrite(val: u32) void {
     var cmdBuf: [4]u32 = undefined;
+
     inline for (0..4) |i| {
         const bit1: u8 = if (val & (1 << (2 * i)) > 0) 1 else 0;
         const bit2: u8 = if (val & (1 << (2 * i + 1)) > 0) 1 else 0;
@@ -130,20 +159,35 @@ fn dataWrite(val: u32) void {
         config.pio.sm_blocking_write(config.sm, cmdBuf[i] << 24);
 }
 
-fn registerWrite(addr: u32) void {
-    dataWrite(0x02);
+fn dataWriteCT(comptime val: u32) void {
+    const cmdBuf = comptime blk: {
+        var cmdBuf: [4]u32 = undefined;
+        for (0..4) |i| {
+            const bit1 = if (val & (1 << (2 * i)) > 0) 1 else 0;
+            const bit2 = if (val & (1 << (2 * i + 1)) > 0) 1 else 0;
+            cmdBuf[3 - i] = (bit1 | (bit2 << 4)) << 24;
+        }
+        break :blk cmdBuf;
+    };
 
-    dataWrite(0x00);
-    dataWrite(addr);
-    dataWrite(0x00);
+    inline for (0..4) |i|
+        config.pio.sm_blocking_write(config.sm, cmdBuf[i]);
 }
 
-fn pixelWrite(addr: u32) void {
-    dataWrite(0x32);
+fn registerWrite(comptime addr: u32) void {
+    dataWriteCT(0x02);
 
-    dataWrite(0x00);
-    dataWrite(addr);
-    dataWrite(0x00);
+    dataWriteCT(0x00);
+    dataWriteCT(addr);
+    dataWriteCT(0x00);
+}
+
+fn pixelWrite(comptime addr: u32) void {
+    dataWriteCT(0x32);
+
+    dataWriteCT(0x00);
+    dataWriteCT(addr);
+    dataWriteCT(0x00);
 }
 
 inline fn select() void {
@@ -169,7 +213,7 @@ fn initPio() !void {
 
     const offset = try Pio.add_program(config.pio, four_wire_data_program);
 
-    const pio_config: rp2xxx.pio.StateMachineInitOptions = .{
+    const pio_config: hal.pio.StateMachineInitOptions = .{
         .exec = .{
             .wrap_target = offset + fourWireDataWrapTarget,
             .wrap = offset + fourWireDataWrap,
@@ -222,33 +266,33 @@ fn initRegisters() void {
 
     select();
     registerWrite(0x44);
-    dataWrite(0x01);
-    dataWrite(0xC5);
+    dataWriteCT(0x01);
+    dataWriteCT(0xC5);
     deselect();
 
     select();
     registerWrite(0x35);
-    dataWrite(0x00);
+    dataWriteCT(0x00);
     deselect();
 
     select();
     registerWrite(0x3A);
-    dataWrite(0x55);
+    dataWriteCT(0x55);
     deselect();
 
     select();
     registerWrite(0xC4);
-    dataWrite(0x80);
+    dataWriteCT(0x80);
     deselect();
 
     select();
     registerWrite(0x53);
-    dataWrite(0x20);
+    dataWriteCT(0x20);
     deselect();
 
     select();
     registerWrite(0x51);
-    dataWrite(0xFF);
+    dataWriteCT(0xFF);
     deselect();
 
     select();
@@ -267,38 +311,70 @@ fn reset() void {
     time.sleep_ms(300);
 }
 
+fn handleSigInt(sig_num: c_int) callconv(.c) void {
+    _ = sig_num;
+    deinit();
+    std.posix.exit(1);
+}
+
 pub fn init() !void {
+    if (use_emulator) {
+        try sdl3.init(init_flags);
+        window, renderer = try sdl3.render.Renderer.initWithWindow("PicoWatch screen emulator [OPAQUE]", WIDTH, HEIGHT, .{});
+
+        const action = std.posix.Sigaction{
+            .handler = .{ .handler = handleSigInt },
+            .mask = std.posix.sigemptyset(),
+            .flags = 0,
+        };
+
+        std.posix.sigaction(std.posix.SIG.INT, &action, null);
+
+        return;
+    }
+
     try initPio();
 
     reset();
 
     initRegisters();
 
+    setWindowSize(0, 0, WIDTH, HEIGHT);
+
     dma_tx = dma.claim_unused_channel().?;
 }
 
+pub fn deinit() void {
+    if (!use_emulator) return;
+    window.deinit();
+    sdl3.quit(init_flags);
+    sdl3.shutdown();
+}
+
 pub fn setBrightness(brightness: u8) void {
+    if (use_emulator) return;
+
     select();
     registerWrite(0x51);
     dataWrite(brightness);
     deselect();
 }
 
-fn setWindowSize(start_x: u16, start_y: u16, end_x: u16, end_y: u16) void {
+fn setWindowSize(comptime start_x: u16, comptime start_y: u16, comptime end_x: u16, comptime end_y: u16) void {
     select();
     registerWrite(0x2a);
-    dataWrite(start_x >> 8);
-    dataWrite(start_x & 0xff);
-    dataWrite((end_x - 1) >> 8);
-    dataWrite((end_x - 1) & 0xff);
+    dataWriteCT(start_x >> 8);
+    dataWriteCT(start_x & 0xff);
+    dataWriteCT((end_x - 1) >> 8);
+    dataWriteCT((end_x - 1) & 0xff);
     deselect();
 
     select();
     registerWrite(0x2b);
-    dataWrite(start_y >> 8);
-    dataWrite(start_y & 0xff);
-    dataWrite((end_y - 1) >> 8);
-    dataWrite((end_y - 1) & 0xff);
+    dataWriteCT(start_y >> 8);
+    dataWriteCT(start_y & 0xff);
+    dataWriteCT((end_y - 1) >> 8);
+    dataWriteCT((end_y - 1) & 0xff);
     deselect();
 
     select();
@@ -306,87 +382,116 @@ fn setWindowSize(start_x: u16, start_y: u16, end_x: u16, end_y: u16) void {
     deselect();
 }
 
-pub fn fillColor(color: u16) void {
-    setWindowSize(0, 0, WIDTH, HEIGHT);
-    select();
-    pixelWrite(0x2c);
+pub fn writeImage(image: *[PIXEL_COUNT]ColorSize) !void {
+    if (use_emulator) {
+        const surface = try window.getSurface();
 
-    var image: [HEIGHT]u16 = undefined;
-    inline for (0..HEIGHT) |i|
-        image[i] = color >> 8 | (color & 0xff) << 8;
-    const readAddr = @intFromPtr(@as(*volatile [HEIGHT]u16, &image));
-
-    for (0..HEIGHT) |_| {
-        dma_tx.setup_transfer_raw(
-            @intFromPtr(config.pio.sm_get_tx_fifo(config.sm)),
-            readAddr,
-            WIDTH * 2,
-            dma_config,
+        const texture = try renderer.createTexture(
+            surface.getFormat().?,
+            sdl3.render.Texture.Access.streaming,
+            WIDTH,
+            HEIGHT,
         );
-        dma_tx.wait_for_finish_blocking();
+
+        const lock = try texture.lock(null);
+        const pixels_ptr: [*]u8 = lock[0];
+        const u32_pixels_ptr: [*]u32 = @ptrCast(@alignCast(pixels_ptr));
+
+        for (0..PIXEL_COUNT) |i| {
+            const color = image.*[i];
+            const rgb = unpackRgb(color);
+            u32_pixels_ptr[i] = surface.mapRgb(rgb.r, rgb.g, rgb.b).value;
+        }
+
+        texture.unlock();
+
+        try renderer.clear();
+        try renderer.renderTexture(texture, null, null);
+        try renderer.present();
+
+        return;
     }
 
-    deselect();
-}
-
-pub fn writeImage(image: *[PIXEL_COUNT]u16) void {
-    setWindowSize(0, 0, WIDTH, HEIGHT);
     select();
     pixelWrite(0x2c);
 
-    const readAddr = @intFromPtr(@as(*volatile [PIXEL_COUNT]u16, image));
+    const read_addr = @intFromPtr(@as(*volatile [PIXEL_COUNT]ColorSize, image));
 
     dma_tx.setup_transfer_raw(
         @intFromPtr(config.pio.sm_get_tx_fifo(config.sm)),
-        readAddr,
-        PIXEL_COUNT * 2,
+        read_addr,
+        PIXEL_COUNT * if (ColorSize == u16) 2 else 3,
         dma_config,
     );
 
     dma_tx.wait_for_finish_blocking();
+
     deselect();
+}
+
+pub fn packRgb(r: u8, g: u8, b: u8) u16 {
+    const r5 = (@as(u16, r) * 31 + 127) / 255;
+    const g6 = (@as(u16, g) * 63 + 127) / 255;
+    const b5 = (@as(u16, b) * 31 + 127) / 255;
+
+    return (r5 << 11) | (g6 << 5) | b5;
+}
+
+pub fn unpackRgb(color: u16) struct { r: u8, g: u8, b: u8 } {
+    const r5 = @as(u16, color >> 11) & 0x1F;
+    const g6 = @as(u16, color >> 5) & 0x3F;
+    const b5 = @as(u16, color) & 0x1F;
+
+    const r8 = @as(u8, @intCast((r5 * 255 + 15) / 31));
+    const g8 = @as(u8, @intCast((g6 * 255 + 31) / 63));
+    const b8 = @as(u8, @intCast((b5 * 255 + 15) / 31));
+
+    return .{ .r = r8, .g = g8, .b = b8 };
 }
 
 pub inline fn isInRange(x: u16, y: u16) bool {
     return x >= 0 and x < WIDTH and y >= 0 and y < HEIGHT;
 }
 
-pub fn addInRange(a: u16, b: u16) u16 {
-    return @min(WIDTH - 1, a + b);
+pub fn addInRange(dir: DIRECTION, a: u16, b: u16) u16 {
+    const res: struct { u16, u1 } = @addWithOverflow(a, b);
+    if (res[1] == 1) return WIDTH;
+    return @min(@intFromEnum(dir) - 1, res[0]);
 }
 
-pub fn subInRange(a: u16, b: u16) u16 {
+pub fn subInRange(dir: DIRECTION, a: u16, b: u16) u16 {
     const res: struct { u16, u1 } = @subWithOverflow(a, b);
     if (res[1] == 1) return 0;
-    return res[0];
+    return @min(@intFromEnum(dir) - 1, res[0]);
 }
 
 pub fn difference(comptime T: type, a: T, b: T) T {
     return if (a > b) a - b else b - a;
 }
 
-pub fn pixel(image: *[PIXEL_COUNT]u16, x: u16, y: u16, color: u16) void {
+pub fn pixel(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, color: ColorSize) void {
     if (isInRange(x, y))
-        image.*[x + y * WIDTH] = color >> 8 | (color & 0xff) << 8;
+        image.*[x + @as(u32, y) * WIDTH] = color >> 8 | (color & 0xff) << 8;
 }
 
-pub fn rect(image: *[PIXEL_COUNT]u16, x: u16, y: u16, width: u16, height: u16, color: u16) void {
+pub fn rect(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, width: u16, height: u16, color: ColorSize) void {
     for (x..x + width) |x2| {
         for (y..y + height) |y2|
             pixel(image, @intCast(x2), @intCast(y2), color);
     }
 }
 
-pub fn circle(image: *[PIXEL_COUNT]u16, x: u16, y: u16, r: u16, color: u16) void {
-    for (subInRange(x, r)..addInRange(x, r)) |x2| {
-        for (subInRange(y, r)..addInRange(y, r)) |y2| {
-            const d = @sqrt(@as(f64, @floatFromInt(math.pow(u16, difference(u16, x, @intCast(x2)), 2) + math.pow(u16, difference(u16, y, @intCast(y2)), 2))));
-            if (d <= @as(@TypeOf(d), @floatFromInt(r)))
+pub fn circle(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, r: u16, color: ColorSize) void {
+    const r_squared = @as(f64, @floatFromInt(math.pow(u16, r, 2)));
+    for (subInRange(.X, x, r)..addInRange(.X, x, r)) |x2| {
+        for (subInRange(.Y, y, r)..addInRange(.Y, y, r)) |y2| {
+            const distance_squared = @as(f64, @floatFromInt(math.pow(u16, difference(u16, x, @intCast(x2)), 2) + math.pow(u16, difference(u16, y, @intCast(y2)), 2)));
+            if (distance_squared <= r_squared)
                 pixel(image, @intCast(x2), @intCast(y2), color);
         }
     }
 }
 
-pub fn fill(image: *[PIXEL_COUNT]u16, color: u16) void {
-    for (0..PIXEL_COUNT) |i| image.*[i] = color >> 8 | (color & 0xff) << 8;
+pub fn fill(image: *[PIXEL_COUNT]ColorSize, color: ColorSize) void {
+    @memset(image, color);
 }

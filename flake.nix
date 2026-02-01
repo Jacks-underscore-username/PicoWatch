@@ -42,6 +42,7 @@
       full_pico_sdk
       picotool
       gdb
+      lldb
       cmake
       udisks
       python3
@@ -51,15 +52,17 @@
       entr
       shfmt
       zig
+      perf
     ];
 
-    libusbLibPath = "${pkgs_stable_configured.libusb1}/lib";
     picoSdkPath = "${full_pico_sdk}/lib/pico-sdk";
+    lldbPath = "${pkgs_stable_configured.lldb}/bin";
   in {
     devShells.${system}.default = pkgs_stable.mkShell {
       nativeBuildInputs = deps;
 
       shellHook = ''
+        export LLDB_PATH="${lldbPath}"
         export PICO_SDK_PATH="${picoSdkPath}"
       '';
     };

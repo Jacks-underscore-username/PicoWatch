@@ -1,11 +1,12 @@
 const std = @import("std");
 const microzig = @import("microzig");
+const use_emulator = @import("build_options").use_emulator;
 
-const rp2xxx = microzig.hal;
-const time = rp2xxx.time;
-const gpio = rp2xxx.gpio;
+const hal = microzig.hal;
+const time = hal.time;
+const gpio = hal.gpio;
 const usb = microzig.core.usb;
-const USB_Device = rp2xxx.usb.Polled(.{});
+const USB_Device = hal.usb.Polled(.{});
 const USB_Serial = usb.drivers.CDC;
 
 var usb_device: USB_Device = undefined;
@@ -21,7 +22,7 @@ var usb_controller: usb.DeviceController(.{
     .configurations = &.{.{
         .attributes = .{ .self_powered = false },
         .max_current_ma = 50,
-        .Drivers = struct { serial: USB_Serial, reset: rp2xxx.usb.ResetDriver(null, 0) },
+        .Drivers = struct { serial: USB_Serial, reset: hal.usb.ResetDriver(null, 0) },
     }},
 }, .{.{
     .serial = .{ .itf_notifi = "Board CDC", .itf_data = "Board CDC Data" },
@@ -41,41 +42,59 @@ pub const microzig_options = microzig.Options{
         .{ .scope = .usb_ctrl, .level = .warn },
         .{ .scope = .usb_cdc, .level = .warn },
     },
-    .logFn = rp2xxx.uart.log,
+    .logFn = hal.uart.log,
 };
 
-const pin_config: rp2xxx.pins.GlobalConfiguration = .{
+const pin_config: hal.pins.GlobalConfiguration = .{
     .GPIO0 = .{ .function = .UART0_TX },
     .GPIO25 = .{ .name = "led", .direction = .out },
 };
 
 pub fn init() void {
+    if (use_emulator) return;
+
     const pins = pin_config.apply();
 
-    const uart = rp2xxx.uart.instance.num(0);
+    const uart = hal.uart.instance.num(0);
     uart.apply(.{
-        .clock_config = rp2xxx.clock_config,
+        .clock_config = hal.clock_config,
     });
-    rp2xxx.uart.init_logger(uart);
+    hal.uart.init_logger(uart);
 
     pins.led.put(1);
 
     usb_device = .init();
+
+    while (!ready()) poll();
+
+    for (0..10) |_| log("\r\n", .{});
 }
 
 pub fn poll() void {
+    if (use_emulator) return;
+
     usb_device.poll(&usb_controller);
 }
 
 pub fn ready() bool {
+    if (use_emulator) return true;
+
     return if (usb_controller.drivers()) |_| true else false;
 }
 
 pub fn log(comptime fmt: []const u8, args: anytype) void {
+    if (use_emulator) {
+        std.log.info(fmt, args);
+        return;
+    }
+
     usbCdcWrite(&(usb_controller.drivers().?).serial, fmt, args);
+    poll();
 }
 
 pub fn read() []const u8 {
+    if (use_emulator) return;
+
     return usbCdcRead(&(usb_controller.drivers().?).serial);
 }
 
