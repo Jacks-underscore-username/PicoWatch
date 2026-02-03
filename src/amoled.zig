@@ -3,6 +3,7 @@ const microzig = @import("microzig");
 const sdl3 = @import("sdl3");
 const usb = @import("usb.zig");
 const main = @import("main.zig");
+const profiler = @import("profiler.zig");
 const use_emulator = @import("build_options").use_emulator;
 
 const math = std.math;
@@ -385,6 +386,9 @@ fn setWindowSize(comptime start_x: u16, comptime start_y: u16, comptime end_x: u
 }
 
 pub fn writeImage(image: *[PIXEL_COUNT]ColorSize) !void {
+    profiler.enter("writeImage");
+    defer profiler.exit();
+
     if (use_emulator) {
         const surface = try window.getSurface();
 
@@ -425,11 +429,13 @@ pub fn writeImage(image: *[PIXEL_COUNT]ColorSize) !void {
     );
 
     dma_tx.wait_for_finish_blocking();
-
     deselect();
 }
 
 pub fn packRgb(r: u8, g: u8, b: u8) u16 {
+    profiler.enter("packRgb");
+    defer profiler.exit();
+
     const r5 = (@as(u16, r) * 31 + 127) / 255;
     const g6 = (@as(u16, g) * 63 + 127) / 255;
     const b5 = (@as(u16, b) * 31 + 127) / 255;
@@ -438,6 +444,9 @@ pub fn packRgb(r: u8, g: u8, b: u8) u16 {
 }
 
 pub fn unpackRgb(color: u16) struct { r: u8, g: u8, b: u8 } {
+    profiler.enter("unpackRgb");
+    defer profiler.exit();
+
     const r5 = @as(u16, color >> 11) & 0x1F;
     const g6 = @as(u16, color >> 5) & 0x3F;
     const b5 = @as(u16, color) & 0x1F;
@@ -453,28 +462,39 @@ pub inline fn isInRange(x: u16, y: u16) bool {
     return x >= 0 and x < WIDTH and y >= 0 and y < HEIGHT;
 }
 
-pub fn addInRange(dir: DIRECTION, a: u16, b: u16) u16 {
-    const res: struct { u16, u1 } = @addWithOverflow(a, b);
-    if (res[1] == 1) return WIDTH;
-    return @min(@intFromEnum(dir) - 1, res[0]);
+pub fn addInRange(comptime T: type, dir: DIRECTION, a: T, b: T) T {
+    profiler.enter("addInRange");
+    defer profiler.exit();
+
+    if (b > 0) {
+        const res: struct { T, u1 } = @addWithOverflow(a, b);
+        if (res[1] == 1) return @intFromEnum(dir) - 1;
+        return @min(@intFromEnum(dir) - 1, res[0]);
+    } else {
+        const res: struct { T, u1 } = @subWithOverflow(a, @as(T, @intCast(@abs(b))));
+        if (res[1] == 1) return 0;
+        return @max(0, res[0]);
+    }
 }
 
-pub fn subInRange(dir: DIRECTION, a: u16, b: u16) u16 {
-    const res: struct { u16, u1 } = @subWithOverflow(a, b);
-    if (res[1] == 1) return 0;
-    return @min(@intFromEnum(dir) - 1, res[0]);
-}
+pub inline fn difference(comptime T: type, a: T, b: T) T {
+    profiler.enter("difference");
+    defer profiler.exit();
 
-pub fn difference(comptime T: type, a: T, b: T) T {
     return if (a > b) a - b else b - a;
 }
 
-pub fn pixel(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, color: ColorSize) void {
-    if (isInRange(x, y))
-        image.*[x + @as(u32, y) * WIDTH] = @byteSwap(color);
+pub inline fn pixel(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, color: ColorSize) void {
+    profiler.enter("pixel");
+    defer profiler.exit();
+
+    image.*[x + @as(u32, y) * WIDTH] = @byteSwap(color);
 }
 
 pub fn rect(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, width: u16, height: u16, color: ColorSize) void {
+    profiler.enter("rect");
+    defer profiler.exit();
+
     for (x..x + width) |x2| {
         for (y..y + height) |y2|
             pixel(image, @intCast(x2), @intCast(y2), color);
@@ -482,16 +502,38 @@ pub fn rect(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, width: u16, height: 
 }
 
 pub fn circle(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, r: u16, color: ColorSize) void {
-    const r_squared = @as(f64, @floatFromInt(math.pow(u16, r, 2)));
-    for (subInRange(.X, x, r)..addInRange(.X, x, r)) |x2| {
-        for (subInRange(.Y, y, r)..addInRange(.Y, y, r)) |y2| {
-            const distance_squared = @as(f64, @floatFromInt(math.pow(u16, difference(u16, x, @intCast(x2)), 2) + math.pow(u16, difference(u16, y, @intCast(y2)), 2)));
-            if (distance_squared <= r_squared)
+    profiler.enter("circle");
+    defer profiler.exit();
+
+    const r_squared = math.pow(u16, r, 2);
+    const r_neg = -@as(i32, @intCast(r));
+    const x_range_min: usize = @intCast(addInRange(i64, .X, x, r_neg));
+    const x_range_max: usize = @intCast(addInRange(i64, .X, x, r));
+    const y_range_min: usize = @intCast(addInRange(i64, .Y, y, r_neg));
+    const y_range_max: usize = @intCast(addInRange(i64, .Y, y, r));
+    for (x_range_min..x_range_max) |x2| {
+        const x_diff = difference(u16, x, @intCast(x2));
+        const x_squared = math.pow(u16, x_diff, 2);
+        const r_squared_minus_x = r_squared - x_squared;
+        var max_y_diff: u16 = 0;
+        for (y_range_min..y_range_max) |y2| {
+            const y_diff = difference(u16, y, @intCast(y2));
+            if (y_diff < max_y_diff) {
                 pixel(image, @intCast(x2), @intCast(y2), color);
+                continue;
+            }
+            const y_squared = math.pow(u16, y_diff, 2);
+            if (y_squared <= r_squared_minus_x) {
+                max_y_diff = y_diff;
+                pixel(image, @intCast(x2), @intCast(y2), color);
+            }
         }
     }
 }
 
 pub fn fill(image: *[PIXEL_COUNT]ColorSize, color: ColorSize) void {
+    profiler.enter("fill");
+    defer profiler.exit();
+
     @memset(image, color);
 }

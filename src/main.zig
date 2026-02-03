@@ -3,6 +3,8 @@ const builtin = @import("builtin");
 const microzig = @import("microzig");
 const usb = @import("usb.zig");
 const amoled = @import("amoled.zig");
+const types = @import("types.zig");
+const profiler = @import("profiler.zig");
 const use_emulator = @import("build_options").use_emulator;
 
 const hal = microzig.hal;
@@ -18,27 +20,6 @@ const Ball = struct {
     r: u16,
 };
 
-var startTimes: std.StringHashMap(if (use_emulator) i64 else microzig.drivers.time.Absolute) = undefined;
-
-pub fn startTiming(comptime key: []const u8) void {
-    const now = if (use_emulator) std.time.microTimestamp() else time.get_time_since_boot();
-    startTimes.put(key, now) catch {
-        unreachable;
-    };
-}
-
-pub fn endTiming(comptime key: []const u8) void {
-    defer _ = startTimes.remove(key);
-    const diff: u64 = if (use_emulator) @intCast(std.time.microTimestamp() - startTimes.get(key).?) else time.get_time_since_boot().diff(startTimes.get(key).?).to_us();
-    if (diff < 1_000) {
-        usb.log("{s} took {} US. ", .{ key, diff });
-    } else if (diff < 1_000_000) {
-        usb.log("{s} took {} MS. ", .{ key, diff / 1_000 });
-    } else {
-        usb.log("{s} took {} S. ", .{ key, diff / 1_000_000 });
-    }
-}
-
 pub fn main() !void {
     var gpa = blk: {
         if (use_emulator) {
@@ -52,8 +33,8 @@ pub fn main() !void {
 
     const alloc = gpa.allocator();
 
-    startTimes = .init(alloc);
-    defer startTimes.deinit();
+    profiler.init(alloc);
+    defer profiler.deinit();
 
     usb.init();
 
@@ -75,30 +56,23 @@ pub fn main() !void {
         }
     };
 
-    var balls: [100]Ball = undefined;
+    var balls: [50]Ball = undefined;
     for (0..balls.len) |i|
         balls[i] = .{
-            .x = random.intRangeLessThan(u16, 50, amoled.WIDTH - 50),
-            .y = random.intRangeLessThan(u16, 50, amoled.HEIGHT - 50),
+            .x = random.intRangeLessThan(u16, 100, amoled.WIDTH - 100),
+            .y = random.intRangeLessThan(u16, 100, amoled.HEIGHT - 100),
             .sx = if (random.boolean()) 1 else 0,
             .sy = if (random.boolean()) 1 else 0,
             .r = 25,
             .color = @intFromEnum(random.enumValue(if (amoled.ColorSize == u16) amoled.Colors else amoled.Colors2)),
         };
 
-    // for (0..100) |_| {
-    while (true) {
-        startTiming("Total");
-
-        startTiming("Poll");
+    var i: u64 = 0;
+    while (!use_emulator or i < 2_000) : (i += 1) {
         usb.poll();
-        endTiming("Poll");
 
-        startTiming("Fill");
         amoled.fill(&image, @intFromEnum(amoled.Colors.Black));
-        endTiming("Fill");
 
-        startTiming("Move");
         for (&balls) |*ball| {
             if (ball.sx == 1) {
                 ball.x += 1;
@@ -109,18 +83,14 @@ pub fn main() !void {
             if (ball.x + ball.r >= amoled.WIDTH - 1 or ball.x - ball.r <= 0) ball.sx = if (ball.sx == 1) 0 else 1;
             if (ball.y + ball.r >= amoled.HEIGHT - 1 or ball.y - ball.r <= 0) ball.sy = if (ball.sy == 1) 0 else 1;
         }
-        endTiming("Move");
 
-        startTiming("Circles");
         for (&balls) |*ball| amoled.circle(&image, ball.x, ball.y, ball.r, ball.color);
-        endTiming("Circles");
 
-        startTiming("Write");
         try amoled.writeImage(&image);
-        endTiming("Write");
 
-        endTiming("Total");
-
-        usb.log("\r\n", .{});
+        if (i % 10 == 0) {
+            profiler.log(i + 1);
+            usb.log("i: {}\r\n", .{i});
+        }
     }
 }
