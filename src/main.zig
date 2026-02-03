@@ -56,11 +56,11 @@ pub fn main() !void {
         }
     };
 
-    var balls: [50]Ball = undefined;
+    var balls: [1]Ball = undefined;
     for (0..balls.len) |i|
         balls[i] = .{
-            .x = random.intRangeLessThan(u16, 100, amoled.WIDTH - 100),
-            .y = random.intRangeLessThan(u16, 100, amoled.HEIGHT - 100),
+            .x = random.intRangeLessThan(u16, 25, amoled.WIDTH - 25),
+            .y = random.intRangeLessThan(u16, 25, amoled.HEIGHT - 25),
             .sx = if (random.boolean()) 1 else 0,
             .sy = if (random.boolean()) 1 else 0,
             .r = 25,
@@ -72,6 +72,10 @@ pub fn main() !void {
         usb.poll();
 
         amoled.fill(&image, @intFromEnum(amoled.Colors.Black));
+
+        amoled.rect(&image, 0, 0, amoled.WIDTH, amoled.HEIGHT, @intFromEnum(amoled.Colors.Red));
+        amoled.rect(&image, 0, 0, 25, amoled.HEIGHT, @intFromEnum(amoled.Colors.Green));
+        amoled.rect(&image, 0, 0, amoled.WIDTH, 25, @intFromEnum(amoled.Colors.Blue));
 
         for (&balls) |*ball| {
             if (ball.sx == 1) {

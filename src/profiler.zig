@@ -12,13 +12,17 @@ var stack: std.ArrayList([]const u8) = .empty;
 
 var allocator: std.mem.Allocator = undefined;
 
+const ENABLED = true;
+
 pub fn init(alloc: std.mem.Allocator) void {
+    if (!ENABLED) return;
     allocator = alloc;
     start_times = .init(alloc);
     total_times = .init(alloc);
 }
 
 pub fn deinit() void {
+    if (!ENABLED) return;
     start_times.deinit();
     total_times.deinit();
     stack.clearAndFree(allocator);
@@ -29,6 +33,7 @@ fn getNow() if (use_emulator) i64 else microzig.drivers.time.Absolute {
 }
 
 pub fn enter(comptime func_name: []const u8) void {
+    if (!ENABLED) return;
     const now = getNow();
     start_times.put(func_name, now) catch {
         unreachable;
@@ -39,6 +44,7 @@ pub fn enter(comptime func_name: []const u8) void {
 }
 
 pub fn exit() void {
+    if (!ENABLED) return;
     const func_name = stack.pop().?;
     const start_time = start_times.get(func_name).?;
     const now = getNow();
@@ -56,6 +62,7 @@ pub fn exit() void {
 }
 
 pub fn log(scale: u64) void {
+    if (!ENABLED) return;
     var total_time: f64 = 0;
     var entries: std.ArrayList(std.StringHashMap(u64).Entry) = .empty;
     defer entries.deinit(allocator);

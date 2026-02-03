@@ -491,14 +491,19 @@ pub inline fn pixel(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, color: Color
     image.*[x + @as(u32, y) * WIDTH] = @byteSwap(color);
 }
 
+pub inline fn write_slice(image: *[PIXEL_COUNT]ColorSize, x_start: u16, x_end: u16, y: u16, color: ColorSize) void {
+    profiler.enter("write_slice");
+    defer profiler.exit();
+
+    @memset(image[x_start + @as(u32, y) * WIDTH .. x_end + @as(u32, y) * WIDTH], color);
+}
+
 pub fn rect(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, width: u16, height: u16, color: ColorSize) void {
     profiler.enter("rect");
     defer profiler.exit();
 
-    for (x..x + width) |x2| {
-        for (y..y + height) |y2|
-            pixel(image, @intCast(x2), @intCast(y2), color);
-    }
+    for (y..y + height) |y2|
+        write_slice(image, x, x + width, @intCast(y2), color);
 }
 
 pub fn circle(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, r: u16, color: ColorSize) void {
@@ -511,22 +516,30 @@ pub fn circle(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, r: u16, color: Col
     const x_range_max: usize = @intCast(addInRange(i64, .X, x, r));
     const y_range_min: usize = @intCast(addInRange(i64, .Y, y, r_neg));
     const y_range_max: usize = @intCast(addInRange(i64, .Y, y, r));
-    for (x_range_min..x_range_max) |x2| {
-        const x_diff = difference(u16, x, @intCast(x2));
-        const x_squared = math.pow(u16, x_diff, 2);
-        const r_squared_minus_x = r_squared - x_squared;
-        var max_y_diff: u16 = 0;
-        for (y_range_min..y_range_max) |y2| {
-            const y_diff = difference(u16, y, @intCast(y2));
-            if (y_diff < max_y_diff) {
-                pixel(image, @intCast(x2), @intCast(y2), color);
+    for (y_range_min..y_range_max) |y2| {
+        const y_diff = difference(u16, y, @intCast(y2));
+        const y_squared = math.pow(u16, y_diff, 2);
+        const r_squared_minus_y = r_squared - y_squared;
+        var max_x_diff: u16 = 0;
+        var x_start: ?usize = null;
+        var last_x: usize = 0;
+        for (x_range_min..x_range_max) |x2| {
+            const x_diff = difference(u16, x, @intCast(x2));
+            if (x_diff < max_x_diff) {
+                last_x = x2;
                 continue;
             }
-            const y_squared = math.pow(u16, y_diff, 2);
-            if (y_squared <= r_squared_minus_x) {
-                max_y_diff = y_diff;
-                pixel(image, @intCast(x2), @intCast(y2), color);
+            const x_squared = math.pow(u16, x_diff, 2);
+            if (x_squared <= r_squared_minus_y) {
+                if (x_start) |_| {} else x_start = x2;
+                last_x = x2;
+                max_x_diff = x_diff;
             }
+        }
+        if (x_start) |start| {
+            if (start == last_x) {
+                pixel(image, @intCast(start), @intCast(y2), color);
+            } else write_slice(image, @intCast(start), @intCast(last_x), @intCast(y2), color);
         }
     }
 }
