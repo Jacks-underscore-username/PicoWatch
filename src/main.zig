@@ -59,12 +59,12 @@ pub fn main() !void {
     var balls: [1]Ball = undefined;
     for (0..balls.len) |i|
         balls[i] = .{
-            .x = random.intRangeLessThan(u16, 25, amoled.WIDTH - 25),
-            .y = random.intRangeLessThan(u16, 25, amoled.HEIGHT - 25),
+            .x = random.intRangeLessThan(u16, @divTrunc(25, amoled.SCALE), amoled.WIDTH - @divTrunc(25, amoled.SCALE)),
+            .y = random.intRangeLessThan(u16, @divTrunc(25, amoled.SCALE), amoled.HEIGHT - @divTrunc(25, amoled.SCALE)),
             .sx = if (random.boolean()) 1 else 0,
             .sy = if (random.boolean()) 1 else 0,
-            .r = 25,
-            .color = @intFromEnum(random.enumValue(if (amoled.ColorSize == u16) amoled.Colors else amoled.Colors2)),
+            .r = @divTrunc(25, amoled.SCALE),
+            .color = @intFromEnum(amoled.Colors.White), //  @intFromEnum(random.enumValue(if (amoled.ColorSize == u16) amoled.Colors else amoled.Colors2)),
         };
 
     var i: u64 = 0;
@@ -74,8 +74,8 @@ pub fn main() !void {
         amoled.fill(&image, @intFromEnum(amoled.Colors.Black));
 
         amoled.rect(&image, 0, 0, amoled.WIDTH, amoled.HEIGHT, @intFromEnum(amoled.Colors.Red));
-        amoled.rect(&image, 0, 0, 25, amoled.HEIGHT, @intFromEnum(amoled.Colors.Green));
-        amoled.rect(&image, 0, 0, amoled.WIDTH, 25, @intFromEnum(amoled.Colors.Blue));
+        amoled.rect(&image, 0, 0, @divTrunc(25, amoled.SCALE), amoled.HEIGHT, @intFromEnum(amoled.Colors.Green));
+        amoled.rect(&image, 0, 0, amoled.WIDTH, @divTrunc(25, amoled.SCALE), @intFromEnum(amoled.Colors.Blue));
 
         for (&balls) |*ball| {
             if (ball.sx == 1) {

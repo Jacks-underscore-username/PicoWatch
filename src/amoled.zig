@@ -20,8 +20,18 @@ const fourWireDataWrapTarget = 0;
 const fourWireDataWrap = 1;
 const fourWireDataPioVersion = 0;
 
-pub const WIDTH = 368;
-pub const HEIGHT = 448;
+pub const REAL_WIDTH = 368;
+pub const REAL_HEIGHT = 448;
+pub const REAL_PIXEL_COUNT = REAL_WIDTH * REAL_HEIGHT;
+pub const SCALE = 4;
+
+comptime {
+    if (REAL_WIDTH % SCALE != 0 or REAL_HEIGHT % SCALE != 0)
+        @compileError("Screen width / height must be divisible by scale.");
+}
+
+pub const WIDTH = REAL_WIDTH / SCALE;
+pub const HEIGHT = REAL_HEIGHT / SCALE;
 pub const PIXEL_COUNT = WIDTH * HEIGHT;
 
 pub const DIRECTION = enum(@TypeOf(@max(WIDTH, HEIGHT))) {
@@ -323,7 +333,7 @@ fn handleSigInt(sig_num: c_int) callconv(.c) void {
 pub fn init() !void {
     if (use_emulator) {
         try sdl3.init(init_flags);
-        window, renderer = try sdl3.render.Renderer.initWithWindow("PicoWatch screen emulator [OPAQUE]", WIDTH, HEIGHT, .{});
+        window, renderer = try sdl3.render.Renderer.initWithWindow("PicoWatch screen emulator [OPAQUE]", REAL_WIDTH, REAL_HEIGHT, .{});
 
         const action = std.posix.Sigaction{
             .handler = .{ .handler = handleSigInt },
@@ -366,18 +376,18 @@ pub fn setBrightness(brightness: u8) void {
 fn setWindowSize(comptime start_x: u16, comptime start_y: u16, comptime end_x: u16, comptime end_y: u16) void {
     select();
     registerWrite(0x2a);
-    dataWriteCT(start_x >> 8);
-    dataWriteCT(start_x & 0xff);
-    dataWriteCT((end_x - 1) >> 8);
-    dataWriteCT((end_x - 1) & 0xff);
+    dataWriteCT((start_x * SCALE) >> 8);
+    dataWriteCT((start_x * SCALE) & 0xff);
+    dataWriteCT((end_x * SCALE - 1) >> 8);
+    dataWriteCT((end_x * SCALE - 1) & 0xff);
     deselect();
 
     select();
     registerWrite(0x2b);
-    dataWriteCT(start_y >> 8);
-    dataWriteCT(start_y & 0xff);
-    dataWriteCT((end_y - 1) >> 8);
-    dataWriteCT((end_y - 1) & 0xff);
+    dataWriteCT((start_y * SCALE) >> 8);
+    dataWriteCT((start_y * SCALE) & 0xff);
+    dataWriteCT((end_y * SCALE - 1) >> 8);
+    dataWriteCT((end_y * SCALE - 1) & 0xff);
     deselect();
 
     select();
@@ -389,22 +399,36 @@ pub fn writeImage(image: *[PIXEL_COUNT]ColorSize) !void {
     profiler.enter("writeImage");
     defer profiler.exit();
 
+    var real_image: [REAL_PIXEL_COUNT]ColorSize = undefined;
+    if (SCALE > 1) {
+        for (0..WIDTH) |x| {
+            for (0..HEIGHT) |y| {
+                for (0..SCALE) |offset| {
+                    const slice_start = (x + (y * SCALE + offset) * WIDTH) * SCALE;
+                    @memset(real_image[slice_start .. slice_start + SCALE], image.*[x + y * WIDTH]);
+                }
+            }
+        }
+    }
+
+    const image_ptr = @intFromPtr(@as(*volatile [REAL_PIXEL_COUNT]ColorSize, if (SCALE == 1) image else &real_image));
+
     if (use_emulator) {
         const surface = try window.getSurface();
 
         const texture = try renderer.createTexture(
             surface.getFormat().?,
             sdl3.render.Texture.Access.streaming,
-            WIDTH,
-            HEIGHT,
+            REAL_WIDTH,
+            REAL_HEIGHT,
         );
 
         const lock = try texture.lock(null);
         const pixels_ptr: [*]u8 = lock[0];
         const u32_pixels_ptr: [*]u32 = @ptrCast(@alignCast(pixels_ptr));
 
-        for (0..PIXEL_COUNT) |i| {
-            const color = image.*[i];
+        for (0..REAL_PIXEL_COUNT) |i| {
+            const color = @byteSwap(if (SCALE == 1) image.*[i] else real_image[i]);
             const rgb = unpackRgb(color);
             u32_pixels_ptr[i] = surface.mapRgb(rgb.r, rgb.g, rgb.b).value;
         }
@@ -423,8 +447,8 @@ pub fn writeImage(image: *[PIXEL_COUNT]ColorSize) !void {
 
     dma_tx.setup_transfer_raw(
         @intFromPtr(config.pio.sm_get_tx_fifo(config.sm)),
-        @intFromPtr(@as(*volatile [PIXEL_COUNT]ColorSize, image)),
-        PIXEL_COUNT * if (ColorSize == u16) 2 else 3,
+        image_ptr,
+        REAL_PIXEL_COUNT * if (ColorSize == u16) 2 else 3,
         dma_config,
     );
 
@@ -488,14 +512,14 @@ pub inline fn pixel(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, color: Color
     profiler.enter("pixel");
     defer profiler.exit();
 
-    image.*[x + @as(u32, y) * WIDTH] = @byteSwap(color);
+    image.*[x + @as(u32, y) * WIDTH] = color;
 }
 
 pub inline fn write_slice(image: *[PIXEL_COUNT]ColorSize, x_start: u16, x_end: u16, y: u16, color: ColorSize) void {
     profiler.enter("write_slice");
     defer profiler.exit();
 
-    @memset(image[x_start + @as(u32, y) * WIDTH .. x_end + @as(u32, y) * WIDTH], color);
+    @memset(image[x_start + @as(u32, y) * WIDTH .. x_end + 1 + @as(u32, y) * WIDTH], color);
 }
 
 pub fn rect(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, width: u16, height: u16, color: ColorSize) void {
@@ -503,7 +527,7 @@ pub fn rect(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, width: u16, height: 
     defer profiler.exit();
 
     for (y..y + height) |y2|
-        write_slice(image, x, x + width, @intCast(y2), color);
+        write_slice(image, x, x + width - 1, @intCast(y2), color);
 }
 
 pub fn circle(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, r: u16, color: ColorSize) void {
@@ -513,9 +537,9 @@ pub fn circle(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, r: u16, color: Col
     const r_squared = math.pow(u16, r, 2);
     const r_neg = -@as(i32, @intCast(r));
     const x_range_min: usize = @intCast(addInRange(i64, .X, x, r_neg));
-    const x_range_max: usize = @intCast(addInRange(i64, .X, x, r));
+    const x_range_max: usize = @intCast(addInRange(i64, .X, x, r) + 1);
     const y_range_min: usize = @intCast(addInRange(i64, .Y, y, r_neg));
-    const y_range_max: usize = @intCast(addInRange(i64, .Y, y, r));
+    const y_range_max: usize = @intCast(addInRange(i64, .Y, y, r) + 1);
     for (y_range_min..y_range_max) |y2| {
         const y_diff = difference(u16, y, @intCast(y2));
         const y_squared = math.pow(u16, y_diff, 2);

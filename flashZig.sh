@@ -45,6 +45,6 @@ else
 		while [ ! -e "/dev/ttyACM0" ]; do
 			sleep 0.25
 		done
-		sudo picocom /dev/ttyACM0
+		sudo picocom -q /dev/ttyACM0
 	fi
 fi
