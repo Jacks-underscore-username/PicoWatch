@@ -4,7 +4,8 @@ const sdl3 = @import("sdl3");
 const usb = @import("usb.zig");
 const main = @import("main.zig");
 const profiler = @import("profiler.zig");
-const use_emulator = @import("build_options").use_emulator;
+const types = @import("types.zig");
+const use_simulator = @import("build_options").use_simulator;
 
 const math = std.math;
 const mem = std.mem;
@@ -23,7 +24,7 @@ const fourWireDataPioVersion = 0;
 pub const REAL_WIDTH = 368;
 pub const REAL_HEIGHT = 448;
 pub const REAL_PIXEL_COUNT = REAL_WIDTH * REAL_HEIGHT;
-pub const SCALE = 4;
+pub const SCALE = 8;
 
 comptime {
     if (REAL_WIDTH % SCALE != 0 or REAL_HEIGHT % SCALE != 0)
@@ -34,9 +35,16 @@ pub const WIDTH = REAL_WIDTH / SCALE;
 pub const HEIGHT = REAL_HEIGHT / SCALE;
 pub const PIXEL_COUNT = WIDTH * HEIGHT;
 
-pub const DIRECTION = enum(@TypeOf(@max(WIDTH, HEIGHT))) {
+pub const AXIS = enum(@TypeOf(@max(WIDTH, HEIGHT))) {
     X = WIDTH,
     Y = HEIGHT,
+};
+
+pub const DIRECTION = enum(u4) {
+    up,
+    right,
+    down,
+    left,
 };
 
 pub const ColorSize = if (true) u16 else u24;
@@ -128,6 +136,8 @@ const one_wire_cmd_program = blk: {
         \\.wrap
     , .{}).get_program_by_name("qspi1writeCmd");
 };
+
+pub const Rgb = struct { r: u8, g: u8, b: u8 };
 
 var window: sdl3.video.Window = undefined;
 var renderer: sdl3.render.Renderer = undefined;
@@ -290,7 +300,7 @@ fn initRegisters() void {
 
     select();
     registerWrite(0x3A);
-    dataWriteCT(0x55);
+    dataWriteCT(if (ColorSize == u16) 0x55 else 0x66);
     deselect();
 
     select();
@@ -331,9 +341,9 @@ fn handleSigInt(sig_num: c_int) callconv(.c) void {
 }
 
 pub fn init() !void {
-    if (use_emulator) {
+    if (use_simulator) {
         try sdl3.init(init_flags);
-        window, renderer = try sdl3.render.Renderer.initWithWindow("PicoWatch screen emulator [OPAQUE]", REAL_WIDTH, REAL_HEIGHT, .{});
+        window, renderer = try sdl3.render.Renderer.initWithWindow("PicoWatch screen simulator [OPAQUE]", REAL_WIDTH, REAL_HEIGHT, .{});
 
         const action = std.posix.Sigaction{
             .handler = .{ .handler = handleSigInt },
@@ -358,14 +368,14 @@ pub fn init() !void {
 }
 
 pub fn deinit() void {
-    if (!use_emulator) return;
+    if (!use_simulator) return;
     window.deinit();
     sdl3.quit(init_flags);
     sdl3.shutdown();
 }
 
 pub fn setBrightness(brightness: u8) void {
-    if (use_emulator) return;
+    if (use_simulator) return;
 
     select();
     registerWrite(0x51);
@@ -395,11 +405,12 @@ fn setWindowSize(comptime start_x: u16, comptime start_y: u16, comptime end_x: u
     deselect();
 }
 
-pub fn writeImage(image: *[PIXEL_COUNT]ColorSize) !void {
+pub fn writeImage(alloc: std.mem.Allocator, image: *[PIXEL_COUNT]ColorSize) !void {
     profiler.enter("writeImage");
     defer profiler.exit();
 
-    var real_image: [REAL_PIXEL_COUNT]ColorSize = undefined;
+    const real_image = try alloc.create([REAL_PIXEL_COUNT]ColorSize);
+    defer alloc.destroy(real_image);
     if (SCALE > 1) {
         for (0..WIDTH) |x| {
             for (0..HEIGHT) |y| {
@@ -411,9 +422,7 @@ pub fn writeImage(image: *[PIXEL_COUNT]ColorSize) !void {
         }
     }
 
-    const image_ptr = @intFromPtr(@as(*volatile [REAL_PIXEL_COUNT]ColorSize, if (SCALE == 1) image else &real_image));
-
-    if (use_emulator) {
+    if (use_simulator) {
         const surface = try window.getSurface();
 
         const texture = try renderer.createTexture(
@@ -422,6 +431,7 @@ pub fn writeImage(image: *[PIXEL_COUNT]ColorSize) !void {
             REAL_WIDTH,
             REAL_HEIGHT,
         );
+        defer texture.deinit();
 
         const lock = try texture.lock(null);
         const pixels_ptr: [*]u8 = lock[0];
@@ -429,8 +439,15 @@ pub fn writeImage(image: *[PIXEL_COUNT]ColorSize) !void {
 
         for (0..REAL_PIXEL_COUNT) |i| {
             const color = @byteSwap(if (SCALE == 1) image.*[i] else real_image[i]);
-            const rgb = unpackRgb(color);
-            u32_pixels_ptr[i] = surface.mapRgb(rgb.r, rgb.g, rgb.b).value;
+            if (ColorSize == u16) {
+                const rgb = unpackRgb(color);
+                u32_pixels_ptr[i] = surface.mapRgb(rgb.r, rgb.g, rgb.b).value;
+            } else {
+                const r = @as(u8, @intCast((color >> 16) & 0xFF));
+                const g = @as(u8, @intCast((color >> 8) & 0xFF));
+                const b = @as(u8, @intCast(color & 0xFF));
+                u32_pixels_ptr[i] = surface.mapRgb(r, g, b).value;
+            }
         }
 
         texture.unlock();
@@ -447,7 +464,7 @@ pub fn writeImage(image: *[PIXEL_COUNT]ColorSize) !void {
 
     dma_tx.setup_transfer_raw(
         @intFromPtr(config.pio.sm_get_tx_fifo(config.sm)),
-        image_ptr,
+        @intFromPtr(@as(*volatile [REAL_PIXEL_COUNT]ColorSize, if (SCALE == 1) image else real_image)),
         REAL_PIXEL_COUNT * if (ColorSize == u16) 2 else 3,
         dma_config,
     );
@@ -456,49 +473,99 @@ pub fn writeImage(image: *[PIXEL_COUNT]ColorSize) !void {
     deselect();
 }
 
-pub fn packRgb(r: u8, g: u8, b: u8) u16 {
+pub fn packRgb(color: Rgb) ColorSize {
     profiler.enter("packRgb");
     defer profiler.exit();
 
-    const r5 = (@as(u16, r) * 31 + 127) / 255;
-    const g6 = (@as(u16, g) * 63 + 127) / 255;
-    const b5 = (@as(u16, b) * 31 + 127) / 255;
-
-    return (r5 << 11) | (g6 << 5) | b5;
+    if (ColorSize == u16) {
+        const r5 = (@as(u16, color.r) * 31 + 127) / 255;
+        const g6 = (@as(u16, color.g) * 63 + 127) / 255;
+        const b5 = (@as(u16, color.b) * 31 + 127) / 255;
+        return (r5 << 11) | (g6 << 5) | b5;
+    } else {
+        return (@as(u24, color.r) << 16) | (@as(u24, color.g) << 8) | color.b;
+    }
 }
 
-pub fn unpackRgb(color: u16) struct { r: u8, g: u8, b: u8 } {
+pub fn unpackRgb(color: ColorSize) Rgb {
     profiler.enter("unpackRgb");
     defer profiler.exit();
 
-    const r5 = @as(u16, color >> 11) & 0x1F;
-    const g6 = @as(u16, color >> 5) & 0x3F;
-    const b5 = @as(u16, color) & 0x1F;
+    if (ColorSize == u16) {
+        const r5 = @as(u16, color >> 11) & 0x1F;
+        const g6 = @as(u16, color >> 5) & 0x3F;
+        const b5 = @as(u16, color) & 0x1F;
 
-    const r8 = @as(u8, @intCast((r5 * 255 + 15) / 31));
-    const g8 = @as(u8, @intCast((g6 * 255 + 31) / 63));
-    const b8 = @as(u8, @intCast((b5 * 255 + 15) / 31));
+        const r8 = @as(u8, @intCast((r5 * 255 + 15) / 31));
+        const g8 = @as(u8, @intCast((g6 * 255 + 31) / 63));
+        const b8 = @as(u8, @intCast((b5 * 255 + 15) / 31));
 
-    return .{ .r = r8, .g = g8, .b = b8 };
+        return .{ .r = r8, .g = g8, .b = b8 };
+    } else {
+        return .{
+            .r = @as(u8, @intCast((color >> 16) & 0xFF)),
+            .g = @as(u8, @intCast((color >> 8) & 0xFF)),
+            .b = @as(u8, @intCast(color & 0xFF)),
+        };
+    }
+}
+
+pub fn hsvToRgb(h: u8, s: u8, v: u8) Rgb {
+    profiler.enter("hsvToRgb");
+    defer profiler.exit();
+
+    if (s == 0)
+        return .{ .r = v, .g = v, .b = v };
+
+    const region = h / 43;
+    const remainder = (h - (region * 43)) * 6;
+
+    const s16: u16 = @intCast(s);
+    const v16: u16 = @intCast(v);
+
+    const p: u8 = @intCast((v16 * (255 - s)) >> 8);
+    const q: u8 = @intCast((v16 * (255 - ((s16 * remainder) >> 8))) >> 8);
+    const t: u8 = @intCast((v16 * (255 - ((s16 * (255 - remainder)) >> 8))) >> 8);
+
+    return switch (region) {
+        0 => .{ .r = v, .g = t, .b = p },
+        1 => .{ .r = q, .g = v, .b = p },
+        2 => .{ .r = p, .g = v, .b = t },
+        3 => .{ .r = p, .g = q, .b = v },
+        4 => .{ .r = t, .g = p, .b = v },
+        else => .{ .r = v, .g = p, .b = q },
+    };
 }
 
 pub inline fn isInRange(x: u16, y: u16) bool {
     return x >= 0 and x < WIDTH and y >= 0 and y < HEIGHT;
 }
 
-pub fn addInRange(comptime T: type, dir: DIRECTION, a: T, b: T) T {
+pub fn addInRange(comptime T: type, axis: AXIS, a: T, b: T) T {
     profiler.enter("addInRange");
     defer profiler.exit();
 
     if (b > 0) {
         const res: struct { T, u1 } = @addWithOverflow(a, b);
-        if (res[1] == 1) return @intFromEnum(dir) - 1;
-        return @min(@intFromEnum(dir) - 1, res[0]);
+        if (res[1] == 1) return @intFromEnum(axis) - 1;
+        return @min(@intFromEnum(axis) - 1, res[0]);
     } else {
         const res: struct { T, u1 } = @subWithOverflow(a, @as(T, @intCast(@abs(b))));
         if (res[1] == 1) return 0;
         return @max(0, res[0]);
     }
+}
+
+pub fn pixelOffset(x: u16, y: u16, dir: DIRECTION) struct { u16, u16, bool } {
+    profiler.enter("pixelOffset");
+    defer profiler.exit();
+
+    return switch (dir) {
+        .up => if (y == 0) .{ x, y, false } else .{ x, y - 1, true },
+        .right => if (x == WIDTH - 1) .{ x, y, false } else .{ x + 1, y, true },
+        .down => if (y == HEIGHT - 1) .{ x, y, false } else .{ x, y + 1, true },
+        .left => if (x == 0) .{ x, y, false } else .{ x - 1, y, true },
+    };
 }
 
 pub inline fn difference(comptime T: type, a: T, b: T) T {
@@ -512,14 +579,14 @@ pub inline fn pixel(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, color: Color
     profiler.enter("pixel");
     defer profiler.exit();
 
-    image.*[x + @as(u32, y) * WIDTH] = color;
+    image.*[x + @as(u32, y) * WIDTH] = @byteSwap(color);
 }
 
 pub inline fn write_slice(image: *[PIXEL_COUNT]ColorSize, x_start: u16, x_end: u16, y: u16, color: ColorSize) void {
     profiler.enter("write_slice");
     defer profiler.exit();
 
-    @memset(image[x_start + @as(u32, y) * WIDTH .. x_end + 1 + @as(u32, y) * WIDTH], color);
+    @memset(image[x_start + @as(u32, y) * WIDTH .. x_end + 1 + @as(u32, y) * WIDTH], @byteSwap(color));
 }
 
 pub fn rect(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, width: u16, height: u16, color: ColorSize) void {
@@ -573,4 +640,63 @@ pub fn fill(image: *[PIXEL_COUNT]ColorSize, color: ColorSize) void {
     defer profiler.exit();
 
     @memset(image, color);
+}
+
+test "Colors" {
+    const UnpackTest = struct {
+        color: Colors,
+        rgb: Rgb,
+    };
+
+    const HsvTest = struct {
+        hsv: struct { h: u8, s: u8, v: u8 },
+        rgb: Rgb,
+    };
+
+    const unpack_tests: [5]UnpackTest = .{
+        .{
+            .color = Colors.Red,
+            .rgb = .{ .r = 255, .g = 0, .b = 0 },
+        },
+        .{
+            .color = Colors.Green,
+            .rgb = .{ .r = 0, .g = 255, .b = 0 },
+        },
+        .{
+            .color = Colors.Blue,
+            .rgb = .{ .r = 0, .g = 0, .b = 255 },
+        },
+        .{
+            .color = Colors.Black,
+            .rgb = .{ .r = 0, .g = 0, .b = 0 },
+        },
+        .{
+            .color = Colors.White,
+            .rgb = .{ .r = 255, .g = 255, .b = 255 },
+        },
+    };
+
+    const hsv_tests: [3]HsvTest = .{
+        .{
+            .hsv = .{ .h = 0, .s = 255, .v = 255 },
+            .rgb = .{ .r = 255, .g = 0, .b = 0 },
+        },
+        .{
+            .hsv = .{ .h = 0, .s = 0, .v = 255 },
+            .rgb = .{ .r = 255, .g = 255, .b = 255 },
+        },
+        .{
+            .hsv = .{ .h = 0, .s = 255, .v = 0 },
+            .rgb = .{ .r = 0, .g = 0, .b = 0 },
+        },
+    };
+
+    for (unpack_tests) |unpack_test| {
+        try std.testing.expectEqualDeep(unpack_test.rgb, unpackRgb(@intFromEnum(unpack_test.color)));
+        try std.testing.expectEqual(@intFromEnum(unpack_test.color), packRgb(unpackRgb(@intFromEnum(unpack_test.color))));
+    }
+
+    for (hsv_tests) |hsv_test| {
+        try std.testing.expectEqualDeep(hsv_test.rgb, hsvToRgb(hsv_test.hsv.h, hsv_test.hsv.s, hsv_test.hsv.v));
+    }
 }

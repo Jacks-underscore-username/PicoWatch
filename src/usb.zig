@@ -1,6 +1,6 @@
 const std = @import("std");
 const microzig = @import("microzig");
-const use_emulator = @import("build_options").use_emulator;
+const use_simulator = @import("build_options").use_simulator;
 
 const hal = microzig.hal;
 const time = hal.time;
@@ -51,7 +51,7 @@ const pin_config: hal.pins.GlobalConfiguration = .{
 };
 
 pub fn init() void {
-    if (use_emulator) return;
+    if (use_simulator) return;
 
     const pins = pin_config.apply();
 
@@ -71,29 +71,29 @@ pub fn init() void {
 }
 
 pub fn poll() void {
-    if (use_emulator) return;
+    if (use_simulator) return;
 
     usb_device.poll(&usb_controller);
 }
 
 pub fn ready() bool {
-    if (use_emulator) return true;
+    if (use_simulator) return true;
 
     return if (usb_controller.drivers()) |_| true else false;
 }
 
 pub fn log(comptime fmt: []const u8, args: anytype) void {
-    if (use_emulator) {
+    if (use_simulator) {
         std.log.info(fmt, args);
         return;
     }
 
-    usbCdcWrite(&(usb_controller.drivers().?).serial, fmt, args);
+    usbCdcWrite(&(usb_controller.drivers().?).serial, fmt ++ "\r\n", args);
     poll();
 }
 
 pub fn read() []const u8 {
-    if (use_emulator) return;
+    if (use_simulator) return;
 
     return usbCdcRead(&(usb_controller.drivers().?).serial);
 }

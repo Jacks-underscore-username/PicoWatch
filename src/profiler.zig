@@ -4,58 +4,60 @@ const microzig = @import("microzig");
 const usb = @import("usb.zig");
 const amoled = @import("amoled.zig");
 const types = @import("types.zig");
-const use_emulator = @import("build_options").use_emulator;
+const use_simulator = @import("build_options").use_simulator;
 
-var start_times: std.StringHashMap(if (use_emulator) i64 else microzig.drivers.time.Absolute) = undefined;
+const Item = struct {
+    key: []const u8,
+    start_time: if (use_simulator) i64 else microzig.drivers.time.Absolute,
+};
+
 var total_times: std.StringHashMap(u64) = undefined;
-var stack: std.ArrayList([]const u8) = .empty;
+var stack: std.ArrayList(Item) = .empty;
 
 var allocator: std.mem.Allocator = undefined;
 
-const ENABLED = true;
+const ENABLED = false;
 
 pub fn init(alloc: std.mem.Allocator) void {
     if (!ENABLED) return;
     allocator = alloc;
-    start_times = .init(alloc);
     total_times = .init(alloc);
 }
 
 pub fn deinit() void {
     if (!ENABLED) return;
-    start_times.deinit();
     total_times.deinit();
     stack.clearAndFree(allocator);
 }
 
-fn getNow() if (use_emulator) i64 else microzig.drivers.time.Absolute {
-    return if (use_emulator) std.time.milliTimestamp() else microzig.hal.time.get_time_since_boot();
+pub inline fn getNow() if (use_simulator) i64 else microzig.drivers.time.Absolute {
+    return if (use_simulator) std.time.microTimestamp() else microzig.hal.time.get_time_since_boot();
 }
 
 pub fn enter(comptime func_name: []const u8) void {
     if (!ENABLED) return;
     const now = getNow();
-    start_times.put(func_name, now) catch {
-        unreachable;
-    };
-    stack.append(allocator, func_name) catch {
+    stack.append(allocator, .{
+        .key = func_name,
+        .start_time = now,
+    }) catch {
         unreachable;
     };
 }
 
 pub fn exit() void {
     if (!ENABLED) return;
-    const func_name = stack.pop().?;
-    const start_time = start_times.get(func_name).?;
+    const item = stack.pop().?;
+    const start_time = item.start_time;
     const now = getNow();
-    const diff: u64 = if (use_emulator) @intCast(now - start_time) else now.diff(start_time).to_us();
-    const old_total = total_times.get(func_name);
+    const diff: u64 = if (use_simulator) @intCast(now - start_time) else now.diff(start_time).to_us();
+    const old_total = total_times.get(item.key);
     if (old_total) |old| {
-        total_times.put(func_name, old + diff) catch {
+        total_times.put(item.key, old + diff) catch {
             unreachable;
         };
     } else {
-        total_times.put(func_name, diff) catch {
+        total_times.put(item.key, diff) catch {
             unreachable;
         };
     }
@@ -79,10 +81,10 @@ pub fn log(scale: u64) void {
             return a.value_ptr.* < b.value_ptr.*;
         }
     }.f);
-    usb.log("\r\n", .{});
+    usb.log("", .{});
     for (entries.items) |entry| {
         const percent: f64 = @as(f64, @floatFromInt(entry.value_ptr.* * 100)) / total_time;
         const scaled_time: f64 = @as(f64, @floatFromInt(entry.value_ptr.*)) / @as(f64, @floatFromInt(scale));
-        usb.log("\"{s}\" took {d:.2}% or {d:.0}US\r\n", .{ entry.key_ptr.*, percent, scaled_time });
+        usb.log("\"{s}\" took {d:.2}% or {d:.0}US", .{ entry.key_ptr.*, percent, scaled_time });
     }
 }
