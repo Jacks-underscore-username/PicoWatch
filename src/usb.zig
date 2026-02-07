@@ -50,7 +50,7 @@ const pin_config: hal.pins.GlobalConfiguration = .{
     .GPIO25 = .{ .name = "led", .direction = .out },
 };
 
-pub fn init() void {
+pub fn init() !void {
     if (use_simulator) return;
 
     const pins = pin_config.apply();
@@ -65,9 +65,22 @@ pub fn init() void {
 
     usb_device = .init();
 
-    while (!ready()) poll();
-
-    for (0..10) |_| log("\r\n", .{});
+    const deadline = hal.time.deadline_in_ms(5_000);
+    while (!ready() and !deadline.is_reached_by(hal.time.get_time_since_boot())) poll();
+    if (ready()) for (0..10) |_| log("\r\n", .{});
+    while (!deadline.is_reached_by(hal.time.get_time_since_boot())) {
+        const value = read();
+        if (value.len == 11) {
+            log("Got epoch: \"{s}\"", .{value});
+            const whitespace_chars = &[_]u8{ ' ', '\t', '\n', '\r' };
+            const epoch = try std.fmt.parseInt(u64, std.mem.trim(u8, value, whitespace_chars), 10);
+            hal.rtc.set_time(epoch * 1_000);
+            return;
+        } else {
+            hal.time.sleep_ms(100);
+            log("Got wrong epoch: \"{s}\" with len: {}", .{ value, value.len });
+        }
+    }
 }
 
 pub fn poll() void {
@@ -87,6 +100,8 @@ pub fn log(comptime fmt: []const u8, args: anytype) void {
         std.log.info(fmt, args);
         return;
     }
+
+    if (!ready()) return;
 
     usbCdcWrite(&(usb_controller.drivers().?).serial, fmt ++ "\r\n", args);
     poll();

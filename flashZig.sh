@@ -28,6 +28,10 @@ flash() {
 	sudo umount "$DEVICE"
 	echo "Removing mount point"
 	sudo rm mnt -rf
+	echo "Waiting to send epoch"
+	sleep 1
+	echo "Sending epoch"
+	echo "${EPOCHSECONDS}" | sudo tee -a /dev/ttyACM0
 	end=$(date +%s)
 	runtime=$((end - start))
 	echo "Flashed program in $runtime seconds"

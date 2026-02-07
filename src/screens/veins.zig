@@ -5,17 +5,10 @@ const usb = @import("../usb.zig");
 const amoled = @import("../amoled.zig");
 const types = @import("../types.zig");
 const profiler = @import("../profiler.zig");
+const main = @import("../main.zig");
 const use_simulator = @import("build_options").use_simulator;
 
 const PULSE_STEPS = 100;
-
-inline fn scale(value: f32, comptime min: u16, comptime max: u16) u16 {
-    return @intFromFloat(value * (max - min) + min);
-}
-
-inline fn constrain(value: anytype, min: @TypeOf(value), max: @TypeOf(value)) @TypeOf(value) {
-    return @min(max, @max(min, value));
-}
 
 const Cell = struct {
     x: u16,
@@ -37,6 +30,8 @@ const pulse_values: [PULSE_STEPS]f32 = blk: {
 };
 
 var ticks_since_grow: u64 = 0;
+var sub_pulse_offset: u4 = 0;
+var pulse_offset: u16 = 0;
 
 pub fn deinit(alloc: std.mem.Allocator) void {
     for (cells.items) |cell|
@@ -44,19 +39,31 @@ pub fn deinit(alloc: std.mem.Allocator) void {
     cells.deinit(alloc);
 }
 
-var pulse_offset: u16 = 0;
+var has_started = false;
 
-pub fn update(alloc: std.mem.Allocator, random: std.Random) !void {
+pub fn update(screen_api: main.ScreenApi) !void {
     profiler.enter("veins.update");
     defer profiler.exit();
 
-    const image = try alloc.create([amoled.PIXEL_COUNT]amoled.ColorSize);
-    defer alloc.destroy(image);
+    const alloc = screen_api.alloc;
+    const random = screen_api.random;
+    const image = screen_api.image;
+    const time = screen_api.time;
+
+    var blocked_points: [135 * 4]main.Point = undefined;
+
+    @memcpy(blocked_points[135 * 0 .. 135 * 1], &main.num_patterns_no_zero[0][(if (time.hour > 12) time.hour - 12 else time.hour) / 10]);
+    @memcpy(blocked_points[135 * 1 .. 135 * 2], &main.num_patterns[1][(if (time.hour > 12) time.hour - 12 else time.hour) % 10]);
+    @memcpy(blocked_points[135 * 2 .. 135 * 3], &main.num_patterns_no_zero[2][time.minute / 10]);
+    @memcpy(blocked_points[135 * 3 .. 135 * 4], &main.num_patterns[3][time.minute % 10]);
+
     amoled.fill(image, @intFromEnum(amoled.Colors.Black));
 
     ticks_since_grow += 1;
 
-    pulse_offset = @mod(pulse_offset + 1, PULSE_STEPS);
+    sub_pulse_offset = @mod(sub_pulse_offset + 1, 2);
+    if (sub_pulse_offset == 0)
+        pulse_offset = @mod(pulse_offset + 1, PULSE_STEPS);
 
     var cells_to_remove: std.ArrayList(u16) = .empty;
     defer cells_to_remove.deinit(alloc);
@@ -67,21 +74,21 @@ pub fn update(alloc: std.mem.Allocator, random: std.Random) !void {
         const cell_x = cell.x;
         const cell_y = cell.y;
         const pulse = pulse_values[
-            @intCast(@mod(PULSE_STEPS + pulse_offset -
-                cell.offset * 100 / PULSE_STEPS, PULSE_STEPS))
+            @intCast(@mod(PULSE_STEPS * 10 + pulse_offset -
+                cell.offset * (200 / PULSE_STEPS), PULSE_STEPS))
         ];
         var render_pulse = pulse;
         if (cell.is_alive)
             render_pulse = 1;
 
         const hue: u8 = cell.hue;
-        const saturation: u8 = @intCast(scale(render_pulse, 64, 255));
+        const saturation: u8 = @intFromFloat(render_pulse * (255 - 128) + 128);
         const vibrance: u8 = @intFromFloat(@as(f32, @floatFromInt(cell.brightness)) / ((1 - (pulse + render_pulse) / 2) * 2 + 1));
 
         amoled.pixel(image, cell_x, cell_y, amoled.packRgb(amoled.hsvToRgb(hue, saturation, vibrance)));
 
         if (cell.is_alive) {
-            if (random.float(f32) <= pulse and random.intRangeAtMost(u8, 0, 10) == 0) {
+            if (random.float(f32) <= pulse and random.intRangeLessThan(u5, 0, 10) == 0 and time.second < 55) {
                 var directions: [4]u2 = .{ 0, 1, 2, 3 };
                 random.shuffle(u2, &directions);
                 var has_grown = false;
@@ -92,6 +99,13 @@ pub fn update(alloc: std.mem.Allocator, random: std.Random) !void {
                     if (!moved) continue;
 
                     var is_valid = true;
+
+                    for (blocked_points) |blocked_point| {
+                        if (blocked_point.x == new_x and blocked_point.y == new_y) {
+                            is_valid = false;
+                            break;
+                        }
+                    }
 
                     for (cells.items) |sub_cell| {
                         if (sub_cell.x == new_x and sub_cell.y == new_y) {
@@ -118,8 +132,6 @@ pub fn update(alloc: std.mem.Allocator, random: std.Random) !void {
                     if (is_valid) {
                         has_grown = true;
                         ticks_since_grow = 0;
-                        if (random.boolean())
-                            cell.is_alive = false;
 
                         const new_cell = try alloc.create(Cell);
                         new_cell.x = new_x;
@@ -133,15 +145,15 @@ pub fn update(alloc: std.mem.Allocator, random: std.Random) !void {
                     } else cell.is_alive = false;
                 }
             }
-        } else if (random.intRangeAtMost(u4, 0, 10) == 0 and ticks_since_grow > 250) {
+        } else if (random.intRangeLessThan(u4, 0, 5) == 0 and time.second > 50) {
             if (cell.brightness >= 10) {
                 cell.brightness -= 10;
             } else {
                 cell.brightness = 0;
             }
-            if (cell.brightness == 0)
-                try cells_to_remove.append(alloc, @intCast(cell_index));
         }
+        if (cell.brightness == 0 or time.second == 59)
+            try cells_to_remove.append(alloc, @intCast(cell_index));
     }
 
     while (cells_to_remove.pop()) |index| {
@@ -149,17 +161,23 @@ pub fn update(alloc: std.mem.Allocator, random: std.Random) !void {
         alloc.destroy(removed);
     }
 
-    if (cells.items.len == 0) {
-        const cell = try alloc.create(Cell);
-        cell.x = random.intRangeAtMost(u16, 0, amoled.WIDTH - 1);
-        cell.y = random.intRangeAtMost(u16, 0, amoled.HEIGHT - 1);
-        cell.brightness = 255;
-        cell.distance = 0;
-        cell.hue = random.intRangeAtMost(u8, 0, 255);
-        cell.is_alive = true;
-        cell.offset = 0;
-        try cells.append(alloc, cell);
+    if (cells.items.len == 0 and (time.second < 5 or !has_started)) {
+        has_started = true;
+        var hue: u9 = random.intRangeAtMost(u8, 0, 255);
+        var points: [8]main.Point = undefined;
+        @memcpy(&points, &main.num_pattern_centers);
+        random.shuffle(main.Point, &points);
+        for (points) |point| {
+            const cell = try alloc.create(Cell);
+            cell.x = point.x;
+            cell.y = point.y;
+            cell.brightness = 255;
+            cell.distance = 0;
+            cell.hue = @intCast(hue);
+            cell.is_alive = true;
+            cell.offset = 0;
+            try cells.append(alloc, cell);
+            hue = @mod(hue + 256 / 8, 256);
+        }
     }
-
-    try amoled.writeImage(alloc, image);
 }
