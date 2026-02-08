@@ -7,7 +7,7 @@
             "command": "zig",
             "args": [
                 "build",
-                "-Duse_emulator=true",
+                "-Duse_simulator=true",
                 "-Doptimize=Debug"
             ],
             "problemMatcher": [],

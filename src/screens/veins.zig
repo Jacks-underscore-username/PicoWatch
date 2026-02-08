@@ -47,8 +47,9 @@ pub fn update(screen_api: main.ScreenApi) !void {
 
     const alloc = screen_api.alloc;
     const random = screen_api.random;
-    const image = screen_api.image;
     const time = screen_api.time;
+
+    var image = amoled.Image_8.create();
 
     var blocked_points: [135 * 4]main.Point = undefined;
 
@@ -57,7 +58,7 @@ pub fn update(screen_api: main.ScreenApi) !void {
     @memcpy(blocked_points[135 * 2 .. 135 * 3], &main.num_patterns_no_zero[2][time.minute / 10]);
     @memcpy(blocked_points[135 * 3 .. 135 * 4], &main.num_patterns[3][time.minute % 10]);
 
-    amoled.fill(image, @intFromEnum(amoled.Colors.Black));
+    image.fill(@intFromEnum(amoled.Colors.Black));
 
     ticks_since_grow += 1;
 
@@ -85,7 +86,7 @@ pub fn update(screen_api: main.ScreenApi) !void {
         const saturation: u8 = @intFromFloat(render_pulse * (255 - 128) + 128);
         const vibrance: u8 = @intFromFloat(@as(f32, @floatFromInt(cell.brightness)) / ((1 - (pulse + render_pulse) / 2) * 2 + 1));
 
-        amoled.pixel(image, cell_x, cell_y, amoled.packRgb(amoled.hsvToRgb(hue, saturation, vibrance)));
+        image.pixel(cell_x, cell_y, amoled.packRgb(amoled.hsvToRgb(hue, saturation, vibrance)));
 
         if (cell.is_alive) {
             if (random.float(f32) <= pulse and random.intRangeLessThan(u5, 0, 10) == 0 and time.second < 55) {
@@ -95,7 +96,7 @@ pub fn update(screen_api: main.ScreenApi) !void {
                 for (directions) |direction| {
                     if (has_grown) break;
 
-                    const new_x, const new_y, const moved = amoled.pixelOffset(cell_x, cell_y, @enumFromInt(direction));
+                    const new_x, const new_y, const moved = image.pixelOffset(cell_x, cell_y, @enumFromInt(direction));
                     if (!moved) continue;
 
                     var is_valid = true;
@@ -115,9 +116,9 @@ pub fn update(screen_api: main.ScreenApi) !void {
                     }
 
                     var check_x = if (new_x == 0) 0 else new_x - 1;
-                    while (check_x <= new_x + 1 and is_valid and check_x < amoled.WIDTH) : (check_x += 1) {
+                    while (check_x <= new_x + 1 and is_valid and check_x < image.width) : (check_x += 1) {
                         var check_y = if (new_y == 0) 0 else new_y - 1;
-                        while (check_y <= new_y + 1 and is_valid and check_y < amoled.HEIGHT) : (check_y += 1) {
+                        while (check_y <= new_y + 1 and is_valid and check_y < image.height) : (check_y += 1) {
                             if (check_x == cell_x and check_y == cell_y)
                                 continue;
 
@@ -180,4 +181,6 @@ pub fn update(screen_api: main.ScreenApi) !void {
             hue = @mod(hue + 256 / 8, 256);
         }
     }
+
+    image.render();
 }

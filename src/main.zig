@@ -107,10 +107,10 @@ const temp_num_patterns = blk: {
         }
     }
 
-    const x1: comptime_int = @ceil(@as(comptime_float, @floatFromInt((amoled.WIDTH) * 1)) / 5.0);
-    const x2: comptime_int = @floor(@as(comptime_float, @floatFromInt((amoled.WIDTH) * 3)) / 5.0);
-    const y1: comptime_int = @ceil(@as(comptime_float, @floatFromInt((amoled.WIDTH) * 1)) / 5.0);
-    const y2: comptime_int = @floor(@as(comptime_float, @floatFromInt((amoled.HEIGHT) * 3)) / 5.0);
+    const x1: comptime_int = @ceil(@as(comptime_float, @floatFromInt((amoled.REAL_WIDTH / 8) * 1)) / 5.0);
+    const x2: comptime_int = @floor(@as(comptime_float, @floatFromInt((amoled.REAL_WIDTH / 8) * 3)) / 5.0);
+    const y1: comptime_int = @ceil(@as(comptime_float, @floatFromInt((amoled.REAL_HEIGHT / 8) * 1)) / 5.0);
+    const y2: comptime_int = @floor(@as(comptime_float, @floatFromInt((amoled.REAL_HEIGHT / 8) * 3)) / 5.0);
 
     const digit_start_points: [4]struct { x: comptime_int, y: comptime_int } = .{
         .{ .x = x1, .y = y1 },
@@ -118,12 +118,6 @@ const temp_num_patterns = blk: {
         .{ .x = x1, .y = y2 },
         .{ .x = x2, .y = y2 },
     };
-
-    // Asserts none of the start points are too close to the edge.
-    for (digit_start_points) |point| {
-        if (point.x == 0 or point.x + 9 >= amoled.WIDTH or point.y == 0 or point.y + 15 >= amoled.HEIGHT)
-            @compileError("Point is too close to the edge");
-    }
 
     var result: [4][10][135]Point = undefined;
 
@@ -140,7 +134,7 @@ const temp_num_patterns = blk: {
                 }
             }
             for (index..135) |blank_index|
-                result[point_index][num][blank_index] = .{ .x = amoled.WIDTH, .y = 0 };
+                result[point_index][num][blank_index] = .{ .x = 0, .y = 0 };
         }
     }
 
@@ -161,7 +155,7 @@ pub const num_patterns_no_zero = blk: {
     result = result;
     for (0..4) |point_index| {
         for (0..135) |index|
-            result[point_index][0][index] = .{ .x = amoled.WIDTH, .y = 0 };
+            result[point_index][0][index] = .{ .x = 0, .y = 0 };
 
         for (1..10) |num|
             @memcpy(&result[point_index][num], &num_patterns[point_index][num]);
@@ -175,7 +169,6 @@ pub const ScreenApi = struct {
     time: Time,
     alloc: std.mem.Allocator,
     random: std.Random,
-    image: *[amoled.PIXEL_COUNT]amoled.ColorSize,
 };
 
 pub const Time = struct {
@@ -275,16 +268,12 @@ pub fn main() !void {
         usb.poll();
 
         const time = getCurrentTime();
-        var image: [amoled.PIXEL_COUNT]amoled.ColorSize = undefined;
 
         try veins.update(.{
             .alloc = alloc,
-            .image = &image,
             .random = random,
             .time = time,
         });
-
-        try amoled.writeImage(alloc, &image);
 
         if (i % 10 == 0)
             profiler.log(i + 1);

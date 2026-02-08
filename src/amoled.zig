@@ -26,21 +26,20 @@ pub const REAL_HEIGHT = 448;
 pub const REAL_PIXEL_COUNT = REAL_WIDTH * REAL_HEIGHT;
 pub const SCALE = 8;
 
-comptime {
-    if (REAL_WIDTH % SCALE != 0 or REAL_HEIGHT % SCALE != 0)
-        @compileError("Screen width / height must be divisible by scale.");
-}
-
-pub const WIDTH = REAL_WIDTH / SCALE;
-pub const HEIGHT = REAL_HEIGHT / SCALE;
-pub const PIXEL_COUNT = WIDTH * HEIGHT;
-
-pub const AXIS = enum(@TypeOf(@max(WIDTH, HEIGHT))) {
-    X = WIDTH,
-    Y = HEIGHT,
+pub const Scale = enum(u5) {
+    scale_1 = 1,
+    scale_2 = 2,
+    scale_4 = 4,
+    scale_8 = 8,
+    scale_16 = 16,
 };
 
-pub const DIRECTION = enum(u4) {
+pub const Axis = enum(u1) {
+    x,
+    y,
+};
+
+pub const Direction = enum(u4) {
     up,
     right,
     down,
@@ -136,8 +135,6 @@ const one_wire_cmd_program = blk: {
         \\.wrap
     , .{}).get_program_by_name("qspi1writeCmd");
 };
-
-pub const Rgb = struct { r: u8, g: u8, b: u8 };
 
 var window: sdl3.video.Window = undefined;
 var renderer: sdl3.render.Renderer = undefined;
@@ -362,8 +359,6 @@ pub fn init() !void {
 
     initRegisters();
 
-    setWindowSize(0, 0, WIDTH, HEIGHT);
-
     dma_tx = dma.claim_unused_channel().?;
 }
 
@@ -383,21 +378,21 @@ pub fn setBrightness(brightness: u8) void {
     deselect();
 }
 
-fn setWindowSize(comptime start_x: u16, comptime start_y: u16, comptime end_x: u16, comptime end_y: u16) void {
+fn setWindowSize(start_x: u16, start_y: u16, end_x: u16, end_y: u16) void {
     select();
     registerWrite(0x2a);
-    dataWriteCT((start_x * SCALE) >> 8);
-    dataWriteCT((start_x * SCALE) & 0xff);
-    dataWriteCT((end_x * SCALE - 1) >> 8);
-    dataWriteCT((end_x * SCALE - 1) & 0xff);
+    dataWrite((start_x * SCALE) >> 8);
+    dataWrite((start_x * SCALE) & 0xff);
+    dataWrite((end_x * SCALE - 1) >> 8);
+    dataWrite((end_x * SCALE - 1) & 0xff);
     deselect();
 
     select();
     registerWrite(0x2b);
-    dataWriteCT((start_y * SCALE) >> 8);
-    dataWriteCT((start_y * SCALE) & 0xff);
-    dataWriteCT((end_y * SCALE - 1) >> 8);
-    dataWriteCT((end_y * SCALE - 1) & 0xff);
+    dataWrite((start_y * SCALE) >> 8);
+    dataWrite((start_y * SCALE) & 0xff);
+    dataWrite((end_y * SCALE - 1) >> 8);
+    dataWrite((end_y * SCALE - 1) & 0xff);
     deselect();
 
     select();
@@ -405,73 +400,197 @@ fn setWindowSize(comptime start_x: u16, comptime start_y: u16, comptime end_x: u
     deselect();
 }
 
-pub fn writeImage(alloc: std.mem.Allocator, image: *[PIXEL_COUNT]ColorSize) !void {
-    profiler.enter("writeImage");
-    defer profiler.exit();
+pub const Rgb = struct { r: u8, g: u8, b: u8 };
 
-    const real_image = try alloc.create([REAL_PIXEL_COUNT]ColorSize);
-    defer alloc.destroy(real_image);
-    if (SCALE > 1) {
-        for (0..WIDTH) |x| {
-            for (0..HEIGHT) |y| {
-                for (0..SCALE) |offset| {
-                    const slice_start = (x + (y * SCALE + offset) * WIDTH) * SCALE;
-                    @memset(real_image[slice_start .. slice_start + SCALE], image.*[x + y * WIDTH]);
+pub fn Image(comptime scale: Scale) type {
+    return struct {
+        scale: Scale,
+        data: [REAL_PIXEL_COUNT / @as(comptime_int, @intCast(@intFromEnum(scale)))]ColorSize,
+        width: u16,
+        height: u16,
+        pixel_count: u32,
+        pub fn create() Image(scale) {
+            const scale_num: comptime_int = @intCast(@intFromEnum(scale));
+            return Image(scale){
+                .scale = scale,
+                .data = undefined,
+                .width = REAL_WIDTH / scale_num,
+                .height = REAL_HEIGHT / scale_num,
+                .pixel_count = (REAL_WIDTH / scale_num) * REAL_HEIGHT / scale_num,
+            };
+        }
+
+        pub fn render(self: *Image(scale)) void {
+            profiler.enter("writeImage");
+            defer profiler.exit();
+
+            if (!use_simulator)
+                setWindowSize(0, 0, self.width, self.height);
+
+            var real_image: [REAL_PIXEL_COUNT]ColorSize = undefined;
+            if (scale != .scale_1) {
+                for (0..self.width) |x| {
+                    for (0..self.height) |y| {
+                        for (0..@intFromEnum(scale)) |offset| {
+                            const slice_start = (x + (y * SCALE + offset) * self.width) * SCALE;
+                            @memset(real_image[slice_start .. slice_start + SCALE], self.data[x + y * self.width]);
+                        }
+                    }
+                }
+            }
+
+            if (use_simulator) {
+                const surface = window.getSurface() catch unreachable;
+
+                const texture = renderer.createTexture(
+                    surface.getFormat().?,
+                    sdl3.render.Texture.Access.streaming,
+                    REAL_WIDTH,
+                    REAL_HEIGHT,
+                ) catch unreachable;
+                defer texture.deinit();
+
+                const lock = texture.lock(null) catch unreachable;
+                const pixels_ptr: [*]u8 = lock[0];
+                const u32_pixels_ptr: [*]u32 = @ptrCast(@alignCast(pixels_ptr));
+
+                for (0..REAL_PIXEL_COUNT) |i| {
+                    const color = @byteSwap(if (SCALE == 1) self.data[i] else real_image[i]);
+                    if (ColorSize == u16) {
+                        const rgb = unpackRgb(color);
+                        u32_pixels_ptr[i] = surface.mapRgb(rgb.r, rgb.g, rgb.b).value;
+                    } else {
+                        const r = @as(u8, @intCast((color >> 16) & 0xFF));
+                        const g = @as(u8, @intCast((color >> 8) & 0xFF));
+                        const b = @as(u8, @intCast(color & 0xFF));
+                        u32_pixels_ptr[i] = surface.mapRgb(r, g, b).value;
+                    }
+                }
+
+                texture.unlock();
+
+                renderer.clear() catch unreachable;
+                renderer.renderTexture(texture, null, null) catch unreachable;
+                renderer.present() catch unreachable;
+
+                return;
+            }
+
+            select();
+            pixelWrite(0x2c);
+
+            dma_tx.setup_transfer_raw(
+                @intFromPtr(config.pio.sm_get_tx_fifo(config.sm)),
+                @intFromPtr(@as(*volatile [REAL_PIXEL_COUNT]ColorSize, if (SCALE == 1) self.data else &real_image)),
+                REAL_PIXEL_COUNT * if (ColorSize == u16) 2 else 3,
+                dma_config,
+            );
+
+            dma_tx.wait_for_finish_blocking();
+            deselect();
+        }
+
+        pub fn addInRange(self: *Image(scale), comptime T: type, axis: Axis, a: T, b: T) T {
+            profiler.enter("addInRange");
+            defer profiler.exit();
+
+            if (b > 0) {
+                const res: struct { T, u1 } = @addWithOverflow(a, b);
+                if (res[1] == 1) return (if (axis == .x) self.width else self.height) - 1;
+                return @min((if (axis == .x) self.width else self.height) - 1, res[0]);
+            } else {
+                const res: struct { T, u1 } = @subWithOverflow(a, @as(T, @intCast(@abs(b))));
+                if (res[1] == 1) return 0;
+                return @max(0, res[0]);
+            }
+        }
+
+        pub fn pixelOffset(self: *Image(scale), x: u16, y: u16, dir: Direction) struct { u16, u16, bool } {
+            profiler.enter("pixelOffset");
+            defer profiler.exit();
+
+            return switch (dir) {
+                .up => if (y == 0) .{ x, y, false } else .{ x, y - 1, true },
+                .right => if (x == self.width - 1) .{ x, y, false } else .{ x + 1, y, true },
+                .down => if (y == self.height - 1) .{ x, y, false } else .{ x, y + 1, true },
+                .left => if (x == 0) .{ x, y, false } else .{ x - 1, y, true },
+            };
+        }
+
+        pub inline fn pixel(self: *Image(scale), x: u16, y: u16, color: ColorSize) void {
+            profiler.enter("pixel");
+            defer profiler.exit();
+
+            self.data[x + @as(u32, y) * self.width] = @byteSwap(color);
+        }
+
+        pub inline fn write_slice(self: *Image(scale), x_start: u16, x_end: u16, y: u16, color: ColorSize) void {
+            profiler.enter("write_slice");
+            defer profiler.exit();
+
+            @memset(self.data[x_start + @as(u32, y) * self.width .. x_end + 1 + @as(u32, y) * self.width], @byteSwap(color));
+        }
+
+        pub fn rect(self: *Image(scale), x: u16, y: u16, width: u16, height: u16, color: ColorSize) void {
+            profiler.enter("rect");
+            defer profiler.exit();
+
+            for (y..y + height) |y2|
+                write_slice(self.data, x, x + width - 1, @intCast(y2), color);
+        }
+
+        pub fn circle(x: u16, y: u16, r: u16, color: ColorSize) void {
+            profiler.enter("circle");
+            defer profiler.exit();
+
+            const r_squared = math.pow(u16, r, 2);
+            const r_neg = -@as(i32, @intCast(r));
+            const x_range_min: usize = @intCast(addInRange(i64, .x, x, r_neg));
+            const x_range_max: usize = @intCast(addInRange(i64, .x, x, r) + 1);
+            const y_range_min: usize = @intCast(addInRange(i64, .y, y, r_neg));
+            const y_range_max: usize = @intCast(addInRange(i64, .y, y, r) + 1);
+            for (y_range_min..y_range_max) |y2| {
+                const y_diff = difference(u16, y, @intCast(y2));
+                const y_squared = math.pow(u16, y_diff, 2);
+                const r_squared_minus_y = r_squared - y_squared;
+                var max_x_diff: u16 = 0;
+                var x_start: ?usize = null;
+                var last_x: usize = 0;
+                for (x_range_min..x_range_max) |x2| {
+                    const x_diff = difference(u16, x, @intCast(x2));
+                    if (x_diff < max_x_diff) {
+                        last_x = x2;
+                        continue;
+                    }
+                    const x_squared = math.pow(u16, x_diff, 2);
+                    if (x_squared <= r_squared_minus_y) {
+                        if (x_start) |_| {} else x_start = x2;
+                        last_x = x2;
+                        max_x_diff = x_diff;
+                    }
+                }
+                if (x_start) |start| {
+                    if (start == last_x) {
+                        pixel(@intCast(start), @intCast(y2), color);
+                    } else write_slice(@intCast(start), @intCast(last_x), @intCast(y2), color);
                 }
             }
         }
-    }
 
-    if (use_simulator) {
-        const surface = try window.getSurface();
+        pub fn fill(self: *Image(scale), color: ColorSize) void {
+            profiler.enter("fill");
+            defer profiler.exit();
 
-        const texture = try renderer.createTexture(
-            surface.getFormat().?,
-            sdl3.render.Texture.Access.streaming,
-            REAL_WIDTH,
-            REAL_HEIGHT,
-        );
-        defer texture.deinit();
-
-        const lock = try texture.lock(null);
-        const pixels_ptr: [*]u8 = lock[0];
-        const u32_pixels_ptr: [*]u32 = @ptrCast(@alignCast(pixels_ptr));
-
-        for (0..REAL_PIXEL_COUNT) |i| {
-            const color = @byteSwap(if (SCALE == 1) image.*[i] else real_image[i]);
-            if (ColorSize == u16) {
-                const rgb = unpackRgb(color);
-                u32_pixels_ptr[i] = surface.mapRgb(rgb.r, rgb.g, rgb.b).value;
-            } else {
-                const r = @as(u8, @intCast((color >> 16) & 0xFF));
-                const g = @as(u8, @intCast((color >> 8) & 0xFF));
-                const b = @as(u8, @intCast(color & 0xFF));
-                u32_pixels_ptr[i] = surface.mapRgb(r, g, b).value;
-            }
+            @memset(&self.data, color);
         }
-
-        texture.unlock();
-
-        try renderer.clear();
-        try renderer.renderTexture(texture, null, null);
-        try renderer.present();
-
-        return;
-    }
-
-    select();
-    pixelWrite(0x2c);
-
-    dma_tx.setup_transfer_raw(
-        @intFromPtr(config.pio.sm_get_tx_fifo(config.sm)),
-        @intFromPtr(@as(*volatile [REAL_PIXEL_COUNT]ColorSize, if (SCALE == 1) image else real_image)),
-        REAL_PIXEL_COUNT * if (ColorSize == u16) 2 else 3,
-        dma_config,
-    );
-
-    dma_tx.wait_for_finish_blocking();
-    deselect();
+    };
 }
+
+pub const Image_1 = Image(.scale_1);
+pub const Image_2 = Image(.scale_2);
+pub const Image_4 = Image(.scale_4);
+pub const Image_8 = Image(.scale_8);
+pub const Image_16 = Image(.scale_16);
 
 pub fn packRgb(color: Rgb) ColorSize {
     profiler.enter("packRgb");
@@ -537,109 +656,11 @@ pub fn hsvToRgb(h: u8, s: u8, v: u8) Rgb {
     };
 }
 
-pub inline fn isInRange(x: u16, y: u16) bool {
-    return x >= 0 and x < WIDTH and y >= 0 and y < HEIGHT;
-}
-
-pub fn addInRange(comptime T: type, axis: AXIS, a: T, b: T) T {
-    profiler.enter("addInRange");
-    defer profiler.exit();
-
-    if (b > 0) {
-        const res: struct { T, u1 } = @addWithOverflow(a, b);
-        if (res[1] == 1) return @intFromEnum(axis) - 1;
-        return @min(@intFromEnum(axis) - 1, res[0]);
-    } else {
-        const res: struct { T, u1 } = @subWithOverflow(a, @as(T, @intCast(@abs(b))));
-        if (res[1] == 1) return 0;
-        return @max(0, res[0]);
-    }
-}
-
-pub fn pixelOffset(x: u16, y: u16, dir: DIRECTION) struct { u16, u16, bool } {
-    profiler.enter("pixelOffset");
-    defer profiler.exit();
-
-    return switch (dir) {
-        .up => if (y == 0) .{ x, y, false } else .{ x, y - 1, true },
-        .right => if (x == WIDTH - 1) .{ x, y, false } else .{ x + 1, y, true },
-        .down => if (y == HEIGHT - 1) .{ x, y, false } else .{ x, y + 1, true },
-        .left => if (x == 0) .{ x, y, false } else .{ x - 1, y, true },
-    };
-}
-
 pub inline fn difference(comptime T: type, a: T, b: T) T {
     profiler.enter("difference");
     defer profiler.exit();
 
     return if (a > b) a - b else b - a;
-}
-
-pub inline fn pixel(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, color: ColorSize) void {
-    profiler.enter("pixel");
-    defer profiler.exit();
-
-    image.*[x + @as(u32, y) * WIDTH] = @byteSwap(color);
-}
-
-pub inline fn write_slice(image: *[PIXEL_COUNT]ColorSize, x_start: u16, x_end: u16, y: u16, color: ColorSize) void {
-    profiler.enter("write_slice");
-    defer profiler.exit();
-
-    @memset(image[x_start + @as(u32, y) * WIDTH .. x_end + 1 + @as(u32, y) * WIDTH], @byteSwap(color));
-}
-
-pub fn rect(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, width: u16, height: u16, color: ColorSize) void {
-    profiler.enter("rect");
-    defer profiler.exit();
-
-    for (y..y + height) |y2|
-        write_slice(image, x, x + width - 1, @intCast(y2), color);
-}
-
-pub fn circle(image: *[PIXEL_COUNT]ColorSize, x: u16, y: u16, r: u16, color: ColorSize) void {
-    profiler.enter("circle");
-    defer profiler.exit();
-
-    const r_squared = math.pow(u16, r, 2);
-    const r_neg = -@as(i32, @intCast(r));
-    const x_range_min: usize = @intCast(addInRange(i64, .X, x, r_neg));
-    const x_range_max: usize = @intCast(addInRange(i64, .X, x, r) + 1);
-    const y_range_min: usize = @intCast(addInRange(i64, .Y, y, r_neg));
-    const y_range_max: usize = @intCast(addInRange(i64, .Y, y, r) + 1);
-    for (y_range_min..y_range_max) |y2| {
-        const y_diff = difference(u16, y, @intCast(y2));
-        const y_squared = math.pow(u16, y_diff, 2);
-        const r_squared_minus_y = r_squared - y_squared;
-        var max_x_diff: u16 = 0;
-        var x_start: ?usize = null;
-        var last_x: usize = 0;
-        for (x_range_min..x_range_max) |x2| {
-            const x_diff = difference(u16, x, @intCast(x2));
-            if (x_diff < max_x_diff) {
-                last_x = x2;
-                continue;
-            }
-            const x_squared = math.pow(u16, x_diff, 2);
-            if (x_squared <= r_squared_minus_y) {
-                if (x_start) |_| {} else x_start = x2;
-                last_x = x2;
-                max_x_diff = x_diff;
-            }
-        }
-        if (x_start) |start| {
-            if (start == last_x) {
-                pixel(image, @intCast(start), @intCast(y2), color);
-            } else write_slice(image, @intCast(start), @intCast(last_x), @intCast(y2), color);
-        }
-    }
-}
-
-pub fn fill(image: *[PIXEL_COUNT]ColorSize, color: ColorSize) void {
-    profiler.enter("fill");
-    defer profiler.exit();
-
-    @memset(image, color);
 }
 
 test "Colors" {
