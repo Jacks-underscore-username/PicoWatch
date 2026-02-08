@@ -24,7 +24,8 @@ const fourWireDataPioVersion = 0;
 pub const REAL_WIDTH = 368;
 pub const REAL_HEIGHT = 448;
 pub const REAL_PIXEL_COUNT = REAL_WIDTH * REAL_HEIGHT;
-pub const SCALE = 8;
+
+var circle_cache: [REAL_HEIGHT / 2]packed struct { start: u16, end: u16 } = undefined;
 
 pub const Scale = enum(u5) {
     scale_1 = 1,
@@ -378,46 +379,47 @@ pub fn setBrightness(brightness: u8) void {
     deselect();
 }
 
-fn setWindowSize(start_x: u16, start_y: u16, end_x: u16, end_y: u16) void {
-    select();
-    registerWrite(0x2a);
-    dataWrite((start_x * SCALE) >> 8);
-    dataWrite((start_x * SCALE) & 0xff);
-    dataWrite((end_x * SCALE - 1) >> 8);
-    dataWrite((end_x * SCALE - 1) & 0xff);
-    deselect();
-
-    select();
-    registerWrite(0x2b);
-    dataWrite((start_y * SCALE) >> 8);
-    dataWrite((start_y * SCALE) & 0xff);
-    dataWrite((end_y * SCALE - 1) >> 8);
-    dataWrite((end_y * SCALE - 1) & 0xff);
-    deselect();
-
-    select();
-    registerWrite(0x2c);
-    deselect();
-}
-
 pub const Rgb = struct { r: u8, g: u8, b: u8 };
 
 pub fn Image(comptime scale: Scale) type {
+    const scale_int: comptime_int = @intFromEnum(scale);
     return struct {
         scale: Scale,
-        data: [REAL_PIXEL_COUNT / @as(comptime_int, @intCast(@intFromEnum(scale)))]ColorSize,
+        data: [REAL_PIXEL_COUNT / scale_int]ColorSize,
         width: u16,
         height: u16,
         pixel_count: u32,
         pub fn create() Image(scale) {
-            const scale_num: comptime_int = @intCast(@intFromEnum(scale));
             return Image(scale){
                 .scale = scale,
                 .data = undefined,
-                .width = REAL_WIDTH / scale_num,
-                .height = REAL_HEIGHT / scale_num,
-                .pixel_count = (REAL_WIDTH / scale_num) * REAL_HEIGHT / scale_num,
+                .width = REAL_WIDTH / scale_int,
+                .height = REAL_HEIGHT / scale_int,
+                .pixel_count = (REAL_WIDTH / scale_int) * REAL_HEIGHT / scale_int,
             };
+        }
+
+        pub fn setWindowSize(self: *Image(scale), start_x: u16, start_y: u16, end_x: u16, end_y: u16) void {
+            _ = self;
+            select();
+            registerWrite(0x2a);
+            dataWrite((start_x * scale_int) >> 8);
+            dataWrite((start_x * scale_int) & 0xff);
+            dataWrite((end_x * scale_int - 1) >> 8);
+            dataWrite((end_x * scale_int - 1) & 0xff);
+            deselect();
+
+            select();
+            registerWrite(0x2b);
+            dataWrite((start_y * scale_int) >> 8);
+            dataWrite((start_y * scale_int) & 0xff);
+            dataWrite((end_y * scale_int - 1) >> 8);
+            dataWrite((end_y * scale_int - 1) & 0xff);
+            deselect();
+
+            select();
+            registerWrite(0x2c);
+            deselect();
         }
 
         pub fn render(self: *Image(scale)) void {
@@ -425,15 +427,15 @@ pub fn Image(comptime scale: Scale) type {
             defer profiler.exit();
 
             if (!use_simulator)
-                setWindowSize(0, 0, self.width, self.height);
+                setWindowSize(self, 0, 0, self.width, self.height);
 
             var real_image: [REAL_PIXEL_COUNT]ColorSize = undefined;
             if (scale != .scale_1) {
                 for (0..self.width) |x| {
                     for (0..self.height) |y| {
-                        for (0..@intFromEnum(scale)) |offset| {
-                            const slice_start = (x + (y * SCALE + offset) * self.width) * SCALE;
-                            @memset(real_image[slice_start .. slice_start + SCALE], self.data[x + y * self.width]);
+                        for (0..scale_int) |offset| {
+                            const slice_start = (x + (y * scale_int + offset) * self.width) * scale_int;
+                            @memset(real_image[slice_start .. slice_start + scale_int], self.data[x + y * self.width]);
                         }
                     }
                 }
@@ -455,7 +457,7 @@ pub fn Image(comptime scale: Scale) type {
                 const u32_pixels_ptr: [*]u32 = @ptrCast(@alignCast(pixels_ptr));
 
                 for (0..REAL_PIXEL_COUNT) |i| {
-                    const color = @byteSwap(if (SCALE == 1) self.data[i] else real_image[i]);
+                    const color = @byteSwap(if (scale_int == 1) self.data[i] else real_image[i]);
                     if (ColorSize == u16) {
                         const rgb = unpackRgb(color);
                         u32_pixels_ptr[i] = surface.mapRgb(rgb.r, rgb.g, rgb.b).value;
@@ -481,7 +483,7 @@ pub fn Image(comptime scale: Scale) type {
 
             dma_tx.setup_transfer_raw(
                 @intFromPtr(config.pio.sm_get_tx_fifo(config.sm)),
-                @intFromPtr(@as(*volatile [REAL_PIXEL_COUNT]ColorSize, if (SCALE == 1) self.data else &real_image)),
+                @intFromPtr(@as(*volatile [REAL_PIXEL_COUNT]ColorSize, if (scale_int == 1) &self.data else &real_image)),
                 REAL_PIXEL_COUNT * if (ColorSize == u16) 2 else 3,
                 dma_config,
             );
@@ -536,43 +538,110 @@ pub fn Image(comptime scale: Scale) type {
             defer profiler.exit();
 
             for (y..y + height) |y2|
-                write_slice(self.data, x, x + width - 1, @intCast(y2), color);
+                write_slice(self, x, x + width - 1, @intCast(y2), color);
         }
 
-        pub fn circle(x: u16, y: u16, r: u16, color: ColorSize) void {
+        pub fn circle(self: *Image(scale), x: u16, y: u16, r: u16, color: ColorSize) void {
             profiler.enter("circle");
             defer profiler.exit();
 
             const r_squared = math.pow(u16, r, 2);
             const r_neg = -@as(i32, @intCast(r));
-            const x_range_min: usize = @intCast(addInRange(i64, .x, x, r_neg));
-            const x_range_max: usize = @intCast(addInRange(i64, .x, x, r) + 1);
-            const y_range_min: usize = @intCast(addInRange(i64, .y, y, r_neg));
-            const y_range_max: usize = @intCast(addInRange(i64, .y, y, r) + 1);
+            const x_range_min: usize = @intCast(addInRange(self, i64, .x, x, r_neg));
+            const x_range_max: usize = @intCast(addInRange(self, i64, .x, x, r) + 1);
+            const y_range_min: usize = @intCast(addInRange(self, i64, .y, y, r_neg));
+            const y_range_max: usize = @intCast(addInRange(self, i64, .y, y, r) + 1);
+            var cache_index: u10 = 0;
             for (y_range_min..y_range_max) |y2| {
-                const y_diff = difference(u16, y, @intCast(y2));
-                const y_squared = math.pow(u16, y_diff, 2);
-                const r_squared_minus_y = r_squared - y_squared;
-                var max_x_diff: u16 = 0;
                 var x_start: ?usize = null;
                 var last_x: usize = 0;
-                for (x_range_min..x_range_max) |x2| {
-                    const x_diff = difference(u16, x, @intCast(x2));
-                    if (x_diff < max_x_diff) {
-                        last_x = x2;
-                        continue;
-                    }
-                    const x_squared = math.pow(u16, x_diff, 2);
-                    if (x_squared <= r_squared_minus_y) {
-                        if (x_start) |_| {} else x_start = x2;
-                        last_x = x2;
-                        max_x_diff = x_diff;
+
+                if (y2 > y and cache_index > 0) {
+                    cache_index -= 1;
+                    const entry = circle_cache[cache_index];
+                    x_start = @intCast(entry.start);
+                    last_x = @intCast(entry.end);
+                } else {
+                    const y_diff = difference(u16, y, @intCast(y2));
+                    const y_squared = math.pow(u16, y_diff, 2);
+                    const r_squared_minus_y = r_squared - y_squared;
+                    var max_x_diff: u16 = 0;
+                    for (x_range_min..x_range_max) |x2| {
+                        const x_diff = difference(u16, x, @intCast(x2));
+                        if (x_diff < max_x_diff) {
+                            last_x = x2;
+                            continue;
+                        }
+                        const x_squared = math.pow(u16, x_diff, 2);
+                        if (x_squared <= r_squared_minus_y) {
+                            if (x_start) |_| {} else x_start = x2;
+                            last_x = x2;
+                            max_x_diff = x_diff;
+                        }
                     }
                 }
                 if (x_start) |start| {
+                    if (y2 < y) {
+                        circle_cache[cache_index] = .{ .start = @intCast(start), .end = @intCast(last_x) };
+                        cache_index += 1;
+                    }
                     if (start == last_x) {
-                        pixel(@intCast(start), @intCast(y2), color);
-                    } else write_slice(@intCast(start), @intCast(last_x), @intCast(y2), color);
+                        pixel(self, @intCast(start), @intCast(y2), color);
+                    } else write_slice(self, @intCast(start), @intCast(last_x), @intCast(y2), color);
+                }
+            }
+        }
+
+        pub fn circleOutline(self: *Image(scale), x: u16, y: u16, max_r: u16, min_r: u16, color: ColorSize) void {
+            profiler.enter("circleOutline");
+            defer profiler.exit();
+
+            const max_r_squared = math.pow(u16, max_r, 2);
+            const min_r_squared = math.pow(u16, min_r, 2);
+            const max_r_neg = -@as(i32, @intCast(max_r));
+            const x_range_min: usize = @intCast(addInRange(self, i64, .x, x, max_r_neg));
+            const x_range_max: usize = @intCast(addInRange(self, i64, .x, x, max_r) + 1);
+            const y_range_min: usize = @intCast(addInRange(self, i64, .y, y, max_r_neg));
+            const y_range_max: usize = @intCast(addInRange(self, i64, .y, y, max_r) + 1);
+            var cache_index: u10 = 0;
+            for (y_range_min..y_range_max) |y2| {
+                var x_start: ?usize = null;
+                var last_x: usize = 0;
+
+                if (y2 > y and cache_index > 0) {
+                    cache_index -= 1;
+                    const entry = circle_cache[cache_index];
+                    x_start = @intCast(entry.start);
+                    last_x = @intCast(entry.end);
+                } else {
+                    const y_diff = difference(u16, y, @intCast(y2));
+                    const y_squared = math.pow(u16, y_diff, 2);
+                    const max_r_squared_minus_y = max_r_squared - y_squared;
+                    for (x_range_min..x_range_max) |x2| {
+                        const x_diff = difference(u16, x, @intCast(x2));
+                        const x_squared = math.pow(u16, x_diff, 2);
+                        if (x_squared <= max_r_squared_minus_y and y_squared + x_squared >= min_r_squared) {
+                            if (x_start) |_| {} else x_start = x2;
+                            last_x = x2;
+                        } else if (x_start) |_| {
+                            break;
+                        }
+                    }
+                }
+                if (x_start) |start| {
+                    if (y2 < y) {
+                        circle_cache[cache_index] = .{ .start = @intCast(start), .end = @intCast(last_x) };
+                        cache_index += 1;
+                    }
+                    if (start == last_x) {
+                        pixel(self, @intCast(start), @intCast(y2), color);
+                        if (last_x < x)
+                            pixel(self, @intCast(x + (x - start)), @intCast(y2), color);
+                    } else {
+                        write_slice(self, @intCast(start), @intCast(last_x), @intCast(y2), color);
+                        if (last_x < x)
+                            write_slice(self, @intCast(x + (x - last_x)), @intCast(x + (x - start)), @intCast(y2), color);
+                    }
                 }
             }
         }
@@ -587,6 +656,7 @@ pub fn Image(comptime scale: Scale) type {
 }
 
 pub const Image_1 = Image(.scale_1);
+
 pub const Image_2 = Image(.scale_2);
 pub const Image_4 = Image(.scale_4);
 pub const Image_8 = Image(.scale_8);

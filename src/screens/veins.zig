@@ -33,15 +33,26 @@ var ticks_since_grow: u64 = 0;
 var sub_pulse_offset: u4 = 0;
 var pulse_offset: u16 = 0;
 
-pub fn deinit(alloc: std.mem.Allocator) void {
-    for (cells.items) |cell|
-        alloc.destroy(cell);
-    cells.deinit(alloc);
-}
-
 var has_started = false;
 
-pub fn update(screen_api: main.ScreenApi) !void {
+pub const screen: main.Screen = .{
+    .init = &init,
+    .deinit = &deinit,
+    .update = &update,
+};
+
+fn init(screen_api: main.ScreenApi) !void {
+    _ = screen_api;
+    has_started = false;
+}
+
+fn deinit(screen_api: main.ScreenApi) !void {
+    for (cells.items) |cell|
+        screen_api.alloc.destroy(cell);
+    cells.deinit(screen_api.alloc);
+}
+
+fn update(screen_api: main.ScreenApi) !void {
     profiler.enter("veins.update");
     defer profiler.exit();
 
@@ -53,10 +64,10 @@ pub fn update(screen_api: main.ScreenApi) !void {
 
     var blocked_points: [135 * 4]main.Point = undefined;
 
-    @memcpy(blocked_points[135 * 0 .. 135 * 1], &main.num_patterns_no_zero[0][(if (time.hour > 12) time.hour - 12 else time.hour) / 10]);
-    @memcpy(blocked_points[135 * 1 .. 135 * 2], &main.num_patterns[1][(if (time.hour > 12) time.hour - 12 else time.hour) % 10]);
-    @memcpy(blocked_points[135 * 2 .. 135 * 3], &main.num_patterns_no_zero[2][time.minute / 10]);
-    @memcpy(blocked_points[135 * 3 .. 135 * 4], &main.num_patterns[3][time.minute % 10]);
+    @memcpy(blocked_points[135 * 0 .. 135 * 1], &main.num_patterns.digits[0][(if (time.hour > 12) time.hour - 12 else time.hour) / 10]);
+    @memcpy(blocked_points[135 * 1 .. 135 * 2], &main.num_patterns.digits[1][(if (time.hour > 12) time.hour - 12 else time.hour) % 10]);
+    @memcpy(blocked_points[135 * 2 .. 135 * 3], &main.num_patterns.digits[2][time.minute / 10]);
+    @memcpy(blocked_points[135 * 3 .. 135 * 4], &main.num_patterns.digits[3][time.minute % 10]);
 
     image.fill(@intFromEnum(amoled.Colors.Black));
 
@@ -165,10 +176,21 @@ pub fn update(screen_api: main.ScreenApi) !void {
     if (cells.items.len == 0 and (time.second < 5 or !has_started)) {
         has_started = true;
         var hue: u9 = random.intRangeAtMost(u8, 0, 255);
-        var points: [8]main.Point = undefined;
-        @memcpy(&points, &main.num_pattern_centers);
-        random.shuffle(main.Point, &points);
-        for (points) |point| {
+        var start_points: [8]main.Point = undefined;
+
+        @memcpy(start_points[2 * 0 .. 2 * 1], &main.num_patterns.blocked_centers[0][(if (time.hour > 12) time.hour - 12 else time.hour) / 10]);
+        @memcpy(start_points[2 * 1 .. 2 * 2], &main.num_patterns.blocked_centers[1][(if (time.hour > 12) time.hour - 12 else time.hour) % 10]);
+        @memcpy(start_points[2 * 2 .. 2 * 3], &main.num_patterns.blocked_centers[2][time.minute / 10]);
+        @memcpy(start_points[2 * 3 .. 2 * 4], &main.num_patterns.blocked_centers[3][time.minute % 10]);
+
+        var point_count: u9 = 1;
+        for (start_points) |point| {
+            if (point.x != 0 or point.y != 0) point_count += 1;
+        }
+
+        random.shuffle(main.Point, &start_points);
+        for (start_points) |point| {
+            if (point.x == 0 and point.y == 0) continue;
             const cell = try alloc.create(Cell);
             cell.x = point.x;
             cell.y = point.y;
@@ -178,8 +200,18 @@ pub fn update(screen_api: main.ScreenApi) !void {
             cell.is_alive = true;
             cell.offset = 0;
             try cells.append(alloc, cell);
-            hue = @mod(hue + 256 / 8, 256);
+            hue = @mod(hue + 256 / point_count, 256);
         }
+
+        const cell = try alloc.create(Cell);
+        cell.x = image.width / 2;
+        cell.y = image.height / 2;
+        cell.brightness = 255;
+        cell.distance = 0;
+        cell.hue = @intCast(hue);
+        cell.is_alive = true;
+        cell.offset = 0;
+        try cells.append(alloc, cell);
     }
 
     image.render();

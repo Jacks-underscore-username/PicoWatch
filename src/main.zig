@@ -5,16 +5,17 @@ const usb = @import("usb.zig");
 const amoled = @import("amoled.zig");
 const types = @import("types.zig");
 const profiler = @import("profiler.zig");
-const veins = @import("screens/veins.zig");
+const veins_screen = @import("screens/veins.zig").screen;
+const circles_screen = @import("screens/circles.zig").screen;
 const use_simulator = @import("build_options").use_simulator;
 
 const hal = microzig.hal;
 const Random = if (use_simulator) std.Random else hal.rand;
 
-const temp_num_patterns = blk: {
+pub const num_patterns = blk: {
     @setEvalBranchQuota(15_000);
 
-    const digits: [10][15]bool = .{
+    const raw_digits: [10][15]bool = .{
         .{ // 0
             true, true,  true,
             true, false, true,
@@ -94,7 +95,7 @@ const temp_num_patterns = blk: {
             for (0..5) |y| {
                 for (0..3) |x2| {
                     for (0..3) |y2|
-                        scaled_digits[num][x * 3 + y * 27 + x2 + y2 * 9] = digits[num][x + y * 3];
+                        scaled_digits[num][x * 3 + y * 27 + x2 + y2 * 9] = raw_digits[num][x + y * 3];
                 }
             }
         }
@@ -119,57 +120,100 @@ const temp_num_patterns = blk: {
         .{ .x = x2, .y = y2 },
     };
 
-    var result: [4][10][135]Point = undefined;
+    var digits: [4][10][135]Point = undefined;
+    var digits_no_zero: [4][10][135]Point = undefined;
 
     for (0..4) |point_index| {
         const start_point = digit_start_points[point_index];
         for (0..10) |num| {
             var index = 0;
+            var index_no_zero = 0;
             for (0..9) |x| {
                 for (0..15) |y| {
                     if (scaled_digits[num][x + y * 9]) {
-                        result[point_index][num][index] = .{ .x = start_point.x + x, .y = start_point.y + y };
+                        digits[point_index][num][index] = .{ .x = start_point.x + x, .y = start_point.y + y };
                         index += 1;
+                        if (num > 0) {
+                            digits_no_zero[point_index][num][index] = .{ .x = start_point.x + x, .y = start_point.y + y };
+                            index_no_zero += 1;
+                        }
                     }
                 }
             }
             for (index..135) |blank_index|
-                result[point_index][num][blank_index] = .{ .x = 0, .y = 0 };
+                digits[point_index][num][blank_index] = .{ .x = 0, .y = 0 };
+            for (index_no_zero..135) |blank_index|
+                digits_no_zero[point_index][num][blank_index] = .{ .x = 0, .y = 0 };
         }
     }
 
     var centers: [8]Point = undefined;
     for (0..4) |point_index| {
-        const point = digit_start_points[point_index];
-        centers[point_index * 2] = .{ .x = point.x + 4, .y = point.y + 4 };
-        centers[point_index * 2 + 1] = .{ .x = point.x + 4, .y = point.y + 10 };
+        const start_point = digit_start_points[point_index];
+        centers[point_index * 2] = .{ .x = start_point.x + 4, .y = start_point.y + 4 };
+        centers[point_index * 2 + 1] = .{ .x = start_point.x + 4, .y = start_point.y + 10 };
     }
 
-    break :blk .{ centers, result };
-};
+    var blocked_centers: [4][10][2]Point = undefined;
+    var blocked_centers_no_zero: [4][10][2]Point = undefined;
 
-pub const num_pattern_centers = temp_num_patterns[0];
-pub const num_patterns = temp_num_patterns[1];
-pub const num_patterns_no_zero = blk: {
-    var result: [4][10][135]Point = undefined;
-    result = result;
     for (0..4) |point_index| {
-        for (0..135) |index|
-            result[point_index][0][index] = .{ .x = 0, .y = 0 };
-
-        for (1..10) |num|
-            @memcpy(&result[point_index][num], &num_patterns[point_index][num]);
+        const start_point = digit_start_points[point_index];
+        for (0..10) |num| {
+            const first = .{ true, false, false, false, false, false, false, false, true, true }[num];
+            const second = .{ true, false, false, false, false, false, true, false, true, false }[num];
+            const first_no_zero = .{ false, false, false, false, false, false, false, false, true, true }[num];
+            const second_no_zero = .{ false, false, false, false, false, false, true, false, true, false }[num];
+            if (first and second) {
+                if (num == 0) {
+                    blocked_centers[point_index][num][0] = .{ .x = start_point.x + 4, .y = start_point.y + 7 };
+                    blocked_centers[point_index][num][1] = .{ .x = 0, .y = 0 };
+                } else {
+                    blocked_centers[point_index][num][0] = .{ .x = start_point.x + 4, .y = start_point.y + 4 };
+                    blocked_centers[point_index][num][1] = .{ .x = start_point.x + 4, .y = start_point.y + 10 };
+                }
+            } else if (first) {
+                blocked_centers[point_index][num][0] = .{ .x = start_point.x + 4, .y = start_point.y + 4 };
+                blocked_centers[point_index][num][1] = .{ .x = 0, .y = 0 };
+            } else if (second) {
+                blocked_centers[point_index][num][0] = .{ .x = start_point.x + 4, .y = start_point.y + 10 };
+                blocked_centers[point_index][num][1] = .{ .x = 0, .y = 0 };
+            } else {
+                blocked_centers[point_index][num][0] = .{ .x = 0, .y = 0 };
+                blocked_centers[point_index][num][1] = .{ .x = 0, .y = 0 };
+            }
+            if (first_no_zero and second_no_zero) {
+                blocked_centers_no_zero[point_index][num][0] = .{ .x = start_point.x + 4, .y = start_point.y + 4 };
+                blocked_centers_no_zero[point_index][num][1] = .{ .x = start_point.x + 4, .y = start_point.y + 10 };
+            } else if (first_no_zero) {
+                blocked_centers_no_zero[point_index][num][0] = .{ .x = start_point.x + 4, .y = start_point.y + 4 };
+                blocked_centers_no_zero[point_index][num][1] = .{ .x = 0, .y = 0 };
+            } else if (second_no_zero) {
+                blocked_centers_no_zero[point_index][num][0] = .{ .x = start_point.x + 4, .y = start_point.y + 10 };
+                blocked_centers_no_zero[point_index][num][1] = .{ .x = 0, .y = 0 };
+            } else {
+                blocked_centers_no_zero[point_index][num][0] = .{ .x = 0, .y = 0 };
+                blocked_centers_no_zero[point_index][num][1] = .{ .x = 0, .y = 0 };
+            }
+        }
     }
-    break :blk result;
+
+    break :blk struct {
+        digits: [4][10][135]Point,
+        digits_no_zero: [4][10][135]Point,
+        centers: [8]Point,
+        blocked_centers: [4][10][2]Point,
+        blocked_centers_no_zero: [4][10][2]Point,
+    }{
+        .digits = digits,
+        .digits_no_zero = digits_no_zero,
+        .centers = centers,
+        .blocked_centers = blocked_centers,
+        .blocked_centers_no_zero = blocked_centers_no_zero,
+    };
 };
 
 pub const Point = struct { x: u16, y: u16 };
-
-pub const ScreenApi = struct {
-    time: Time,
-    alloc: std.mem.Allocator,
-    random: std.Random,
-};
 
 pub const Time = struct {
     year: u16,
@@ -178,6 +222,19 @@ pub const Time = struct {
     hour: u5,
     minute: u6,
     second: u6,
+    millisecond: u10,
+};
+
+pub const ScreenApi = struct {
+    time: Time,
+    alloc: std.mem.Allocator,
+    random: std.Random,
+};
+
+pub const Screen = struct {
+    init: *const fn (ScreenApi) anyerror!void,
+    deinit: *const fn (ScreenApi) anyerror!void,
+    update: *const fn (ScreenApi) anyerror!void,
 };
 
 pub fn getCurrentTime() Time {
@@ -198,6 +255,7 @@ pub fn getCurrentTime() Time {
         .hour = day_seconds.getHoursIntoDay(),
         .minute = day_seconds.getMinutesIntoHour(),
         .second = day_seconds.getSecondsIntoMinute(),
+        .millisecond = @intCast(ms % 1000),
     };
 }
 
@@ -205,6 +263,16 @@ pub fn sleep(time: u32) void {
     if (use_simulator) {
         std.Thread.sleep(time * 1_000_000);
     } else hal.time.sleep_ms(time);
+}
+
+var open_screen: ?Screen = null;
+
+pub fn setScreen(screen: Screen, screen_api: ScreenApi) !void {
+    if (open_screen) |last| {
+        try last.deinit(screen_api);
+    }
+    open_screen = screen;
+    try screen.init(screen_api);
 }
 
 pub fn main() !void {
@@ -232,13 +300,6 @@ pub fn main() !void {
     // while (!usb.ready()) usb.poll();
     // for (0..10) |_| usb.log("\r\n", .{});
 
-    // if (!use_simulator) {
-    //     const epoch_time: u64 = 1770423278;
-    //     var buffer: [128]u8 = undefined;
-    //     _ = try microzig.drivers.DateTime.from_timestamp(epoch_time).to_rfc_7231(&buffer);
-    //     hal.rtc.set_time(epoch_time);
-    // }
-
     try amoled.init();
     defer amoled.deinit();
 
@@ -255,25 +316,29 @@ pub fn main() !void {
     };
     random = random;
 
-    defer veins.deinit(alloc);
+    try setScreen(circles_screen, .{
+        .alloc = alloc,
+        .random = random,
+        .time = getCurrentTime(),
+    });
 
     var i: u64 = 0;
-    const target_fps = 60;
+    const target_fps = 30;
     const target_delta: u64 = 1_000_000 / target_fps;
     var last_start: u64 = 0;
     while (i < 400_000 or !use_simulator) : (i += 1) {
-        // usb.log("{}", .{getCurrentTime()});
-
         last_start = if (use_simulator) @intCast(profiler.getNow()) else profiler.getNow().to_us();
         usb.poll();
 
         const time = getCurrentTime();
 
-        try veins.update(.{
-            .alloc = alloc,
-            .random = random,
-            .time = time,
-        });
+        if (open_screen) |screen| {
+            try screen.update(.{
+                .alloc = alloc,
+                .random = random,
+                .time = time,
+            });
+        }
 
         if (i % 10 == 0)
             profiler.log(i + 1);
@@ -281,7 +346,7 @@ pub fn main() !void {
         const now: u64 = if (use_simulator) @intCast(profiler.getNow()) else profiler.getNow().to_us();
         const delta = now - last_start;
         const delay = if (delta < target_delta) (target_delta - delta) / 1_000 else 0;
-        // usb.log("i: {}, delta: {}, target_delta: {}, delay: {}ms", .{ i, delta, target_delta, delay });
+        usb.log("i: {}, delta: {}, target_delta: {}, delay: {}ms", .{ i, delta, target_delta, delay });
         if (delay > 0)
             sleep(@intCast(delay));
     }
