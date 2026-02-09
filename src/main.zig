@@ -1,4 +1,5 @@
 const std = @import("std");
+const math = std.math;
 const builtin = @import("builtin");
 const microzig = @import("microzig");
 const usb = @import("usb.zig");
@@ -213,6 +214,21 @@ pub const num_patterns = blk: {
     };
 };
 
+pub const dial_rotations = blk: {
+    var results: [60]struct { x: f16, y: f16, rads: f32, is_hour: bool } = undefined;
+    for (0..60) |i| {
+        const rads = math.pi * 2.0 * @as(comptime_float, @floatFromInt(i)) / 60.0;
+        results[i] = .{
+            .rads = rads,
+            .x = @sin(rads),
+            .y = @cos(rads),
+            .is_hour = if (i % 5 == 0) true else false,
+        };
+    }
+
+    break :blk results;
+};
+
 pub const Point = struct { x: u16, y: u16 };
 
 pub const Time = struct {
@@ -346,7 +362,7 @@ pub fn main() !void {
         const now: u64 = if (use_simulator) @intCast(profiler.getNow()) else profiler.getNow().to_us();
         const delta = now - last_start;
         const delay = if (delta < target_delta) (target_delta - delta) / 1_000 else 0;
-        usb.log("i: {}, delta: {}, target_delta: {}, delay: {}ms", .{ i, delta, target_delta, delay });
+        // usb.log("i: {}, delta: {}, target_delta: {}, delay: {}ms", .{ i, delta, target_delta, delay });
         if (delay > 0)
             sleep(@intCast(delay));
     }
