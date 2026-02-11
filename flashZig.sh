@@ -2,10 +2,10 @@
 
 flash() {
 	start=$(date +%s)
+	echo "Building"
+	zig build --release=safe
 	echo "Putting device in bootloader"
 	sudo picotool reboot -f -u
-	echo "Building"
-	zig build --release=fast
 	# shellcheck disable=SC2010
 	size=$(ls -sh zig-out/firmware/program.uf2 | grep -Po "^(.+)\s")
 	echo "Resulting file size: ${size}"

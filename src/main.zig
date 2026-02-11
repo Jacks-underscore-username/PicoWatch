@@ -12,6 +12,32 @@ const use_simulator = @import("build_options").use_simulator;
 
 const hal = microzig.hal;
 const Random = if (use_simulator) std.Random else hal.rand;
+const log = usb.ScopedLog(.main);
+
+pub const panic = std.debug.FullPanic(if (use_simulator) std.debug.defaultPanic else customPanic);
+
+fn customPanic(msg: []const u8, first_trace_addr: ?usize) noreturn {
+    _ = first_trace_addr;
+    var last_log: u64 = 0;
+    while (true) {
+        const now: u64 = if (use_simulator) @intCast(std.time.microTimestamp()) else hal.time.get_time_since_boot().to_us();
+        if (now - last_log >= 3 * 1_000_000) {
+            usb.default_log.err("Panic! {s}", .{msg});
+            last_log = now;
+        }
+        usb.poll();
+    }
+}
+
+pub const microzig_options: microzig.Options = .{
+    .log_level = .debug,
+    .log_scope_levels = &.{
+        .{ .scope = .usb_dev, .level = .warn },
+        .{ .scope = .usb_ctrl, .level = .warn },
+        .{ .scope = .usb_cdc, .level = .warn },
+    },
+    .logFn = usb.defaultLog,
+};
 
 pub const num_patterns = blk: {
     @setEvalBranchQuota(15_000);
@@ -292,6 +318,8 @@ pub fn setScreen(screen: Screen, screen_api: ScreenApi) !void {
 }
 
 pub fn main() !void {
+    try usb.init();
+
     var gpa = blk: {
         if (use_simulator) {
             const gpa: std.heap.DebugAllocator(.{
@@ -311,10 +339,6 @@ pub fn main() !void {
 
     profiler.init(alloc);
     defer profiler.deinit();
-
-    try usb.init();
-    // while (!usb.ready()) usb.poll();
-    // for (0..10) |_| usb.log("\r\n", .{});
 
     try amoled.init();
     defer amoled.deinit();
@@ -339,6 +363,7 @@ pub fn main() !void {
     });
 
     var i: u64 = 0;
+
     const target_fps = 30;
     const target_delta: u64 = 1_000_000 / target_fps;
     var last_start: u64 = 0;
@@ -362,7 +387,7 @@ pub fn main() !void {
         const now: u64 = if (use_simulator) @intCast(profiler.getNow()) else profiler.getNow().to_us();
         const delta = now - last_start;
         const delay = if (delta < target_delta) (target_delta - delta) / 1_000 else 0;
-        // usb.log("i: {}, delta: {}, target_delta: {}, delay: {}ms", .{ i, delta, target_delta, delay });
+        // log("i: {}, delta: {}, target_delta: {}, delay: {}ms", .{ i, delta, target_delta, delay });
         if (delay > 0)
             sleep(@intCast(delay));
     }

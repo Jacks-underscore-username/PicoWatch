@@ -1,7 +1,10 @@
 const std = @import("std");
 const microzig = @import("microzig");
+const main = @import("main.zig");
 const use_simulator = @import("build_options").use_simulator;
 
+const io = std.io;
+const Writer = io.Writer;
 const hal = microzig.hal;
 const time = hal.time;
 const gpio = hal.gpio;
@@ -29,56 +32,34 @@ var usb_controller: usb.DeviceController(.{
     .reset = "",
 }}) = .init;
 
-pub fn panic(message: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
-    std.log.err("panic: {s}", .{message});
-    @breakpoint();
-    while (true) {}
-}
-
-pub const microzig_options = microzig.Options{
-    .log_level = .debug,
-    .log_scope_levels = &.{
-        .{ .scope = .usb_dev, .level = .warn },
-        .{ .scope = .usb_ctrl, .level = .warn },
-        .{ .scope = .usb_cdc, .level = .warn },
-    },
-    .logFn = hal.uart.log,
-};
-
 const pin_config: hal.pins.GlobalConfiguration = .{
     .GPIO0 = .{ .function = .UART0_TX },
-    .GPIO25 = .{ .name = "led", .direction = .out },
 };
 
 pub fn init() !void {
     if (use_simulator) return;
 
-    const pins = pin_config.apply();
-
-    const uart = hal.uart.instance.num(0);
-    uart.apply(.{
-        .clock_config = hal.clock_config,
-    });
-    hal.uart.init_logger(uart);
-
-    pins.led.put(1);
+    _ = pin_config.apply();
 
     usb_device = .init();
 
     const deadline = hal.time.deadline_in_ms(5_000);
     while (!ready() and !deadline.is_reached_by(hal.time.get_time_since_boot())) poll();
-    if (ready()) for (0..10) |_| log("\r\n", .{});
+    if (ready()) for (0..10) |_| rawLog("\r\n", .{});
     while (!deadline.is_reached_by(hal.time.get_time_since_boot())) {
         const value = read();
         if (value.len == 11) {
-            log("Got epoch: \"{s}\"", .{value});
             const whitespace_chars = &[_]u8{ ' ', '\t', '\n', '\r' };
-            const epoch = try std.fmt.parseInt(u64, std.mem.trim(u8, value, whitespace_chars), 10);
-            hal.rtc.set_time(epoch * 1_000);
+            const epoch = try std.fmt.parseInt(u64, std.mem.trim(u8, value, whitespace_chars), 10) * 1_000;
+            default_log.info("Got epoch {}", .{epoch});
+            hal.rtc.set_time(epoch);
+            hal.rtc.enable();
+            const now = main.getCurrentTime();
+            default_log.info("Set time to {}/{:0>2}/{:0>2} {:0>2}:{:0>2}:{:0>2}:{:0>4}", .{ now.year, now.month, now.day, now.hour, now.minute, now.second, now.millisecond });
             return;
         } else {
-            hal.time.sleep_ms(100);
-            log("Got wrong epoch: \"{s}\" with len: {}", .{ value, value.len });
+            default_log.info("Waiting for epoch...", .{});
+            hal.time.sleep_ms(500);
         }
     }
 }
@@ -95,22 +76,84 @@ pub fn ready() bool {
     return if (usb_controller.drivers()) |_| true else false;
 }
 
-pub fn log(comptime fmt: []const u8, args: anytype) void {
+pub fn defaultLog(
+    comptime message_level: std.log.Level,
+    comptime scope: @Type(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
     if (use_simulator) {
-        std.log.info(fmt, args);
+        std.log.defaultLog(message_level, scope, format, args);
+
         return;
     }
 
     if (!ready()) return;
 
-    usbCdcWrite(&(usb_controller.drivers().?).serial, fmt ++ "\r\n", args);
+    const level_txt = comptime message_level.asText();
+    const prefix2 = if (scope == .default) ": " else "(" ++ @tagName(scope) ++ "): ";
+    usbCdcWrite(&(usb_controller.drivers().?).serial, level_txt ++ prefix2 ++ format ++ "\n", args);
     poll();
 }
+
+fn rawLog(comptime format: []const u8, args: anytype) void {
+    usbCdcWrite(&(usb_controller.drivers().?).serial, format, args);
+    poll();
+}
+
+pub fn ScopedLog(comptime scope: @Type(.enum_literal)) type {
+    return struct {
+        pub fn err(comptime format: []const u8, args: anytype) void {
+            @branchHint(.cold);
+            defaultLog(.err, scope, format, args);
+        }
+
+        pub fn warn(comptime format: []const u8, args: anytype) void {
+            defaultLog(.warn, scope, format, args);
+        }
+
+        pub fn info(comptime format: []const u8, args: anytype) void {
+            defaultLog(.info, scope, format, args);
+        }
+
+        pub fn debug(comptime format: []const u8, args: anytype) void {
+            defaultLog(.debug, scope, format, args);
+        }
+    };
+}
+
+pub const default_log = ScopedLog(std.log.default_log_scope);
 
 pub fn read() []const u8 {
     if (use_simulator) return;
 
     return usbCdcRead(&(usb_controller.drivers().?).serial);
+}
+
+var writer_buff: [1024]u8 = undefined;
+pub var writer: io.Writer = .{
+    .vtable = &.{
+        .drain = Writer.fixedDrain,
+        .flush = flushWriter,
+        .rebase = Writer.failingRebase,
+    },
+    .end = 0,
+    .buffer = &writer_buff,
+};
+
+fn flushWriter(w: *Writer) Writer.Error!void {
+    const serial: *USB_Serial = &(usb_controller.drivers().?).serial;
+    var tx = w.buffer;
+
+    while (tx.len > 0) {
+        tx = tx[serial.write(tx)..];
+        usb_device.poll(&usb_controller);
+    }
+
+    while (!serial.flush())
+        usb_device.poll(&usb_controller);
+
+    w.end = 0;
 }
 
 var usb_tx_buff: [1024]u8 = undefined;
